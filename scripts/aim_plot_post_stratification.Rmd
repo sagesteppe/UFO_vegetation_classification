@@ -1,0 +1,264 @@
+The purpose of this function is to ensure that the stratum type of terrestrial  AIM points are consistent within a study design. In particular this is useful when a project has implemented a sample design across all possible strata. Several of these are likely to be artifacts of the older satellite derived spatial vegetation products. For an example at the UFO field office CO, a number of  points are drawn in Ponderosa Pine, Aspen, Riparian, habitat types - but are seldom accurately classified, and are better treated as ground truthed data. Nearly all sample designs will at least experience this with their 'Other' plots, which fail to form a cohesive analytical unit.
+
+```{r Load Libraries, echo = F, warning = F}
+library(here)
+library(tidyverse)
+library(sf)
+```
+
+
+```{r Load sample data - the bad way, echo = F}
+
+UFO_land <- st_read(
+  paste0(here(), '/data/processed/UFO_Allotments/', 'UFO_Allotments.shp'),
+  quiet = T) %>% 
+  st_transform(4269) %>% 
+  st_union() %>% 
+  st_cast('POLYGON') %>% 
+  st_as_sf() %>% 
+  st_make_valid()
+
+p <- file.path(here(), 'data/raw/LPI_UFO')
+
+LMF_plots <- st_read(p, layer = 'LMFPlots', quiet = T) %>%
+  select(PlotKey, Ecological, Latitude_N:DateVisite) %>% 
+  st_intersection(UFO_land, .) %>% 
+  left_join(., st_read(p, layer = 'LMFPinterceptt', quiet = T) %>%
+              select(PSU:BASAL, PLOTKEY) %>%
+              rename_with(., ~ str_to_title(.)),
+            by = c('PlotKey' = 'Plotkey')) %>%
+  mutate(Basal =  if_else(Basal == 'None', 'Soil', Basal)) %>%
+  group_by(PlotKey) %>%
+  add_count(name = 'Pts_per_plot') 
+
+AIM_plots <- st_read(p, 'Plots', quiet = T) %>%
+  st_as_sf(coords = c('Longitude', 'Latitude'), crs = 4269) %>%
+  select(SiteKey:County, EcolSite, PrimaryKey, -DateModifi) %>% 
+  st_intersection(UFO_land, .) 
+
+LPI <- st_read(p, 'LPIHeader', quiet = T) %>%
+  select(OBJECTID:RecKey, PrimaryKey) %>%
+  left_join(., st_read(p, 'LPIt', quiet = T) %>%
+              select(OBJECTID, TopCanopy:SoilSurfac, PrimaryKey),
+            by = 'PrimaryKey') %>% 
+  distinct(OBJECTID.y, .keep_all = T)
+
+AIM_plots <- left_join(AIM_plots, LPI, by = 'PrimaryKey') %>%
+  group_by(PlotKey) %>%
+  add_count(name = 'Pts_per_plot') %>% 
+  select(!starts_with('OBJECTID'))
+
+ggplot() +
+  geom_sf(data = AIM_plots) +
+  geom_sf(data = LMF_plots)
+
+rm(LPI)
+```
+
+Now this dataset contains both the information regarding the raw intercepts, and also the first stage area of analysis (PSU - perhaps Plot Study Area?...). We will make these data longer, and for each plot we will calculate the total cover of each plant species at the plot, irrespective of the order of intercepts at the points. 
+
+```{r}
+LPIntercept_LMF <- LMF_plots %>% 
+  filter(Hit1 != 'None') %>% 
+  pivot_longer(Hit1:Hit6, values_to = 'Taxon', names_to = 'Hit_depth') %>% 
+  drop_na(Taxon) %>% 
+  filter(str_length(Taxon) != 2) %>%  # remove types of litters to reduce size of the dataset. 
+  group_by(PlotKey, Taxon) %>% 
+  add_count(name = 'total_cover')  %>% 
+  group_by(PlotKey) %>% 
+  mutate(percent_cover = total_cover/Pts_per_plot * 100) %>% 
+  distinct(Taxon, .keep_all = T) %>% 
+  dplyr::select(PlotKey, Taxon, percent_cover)
+
+LPIntercept_AIM <- AIM_plots %>% 
+  filter(TopCanopy != 'None') %>% 
+  pivot_longer(TopCanopy:Lower4, values_to = 'Taxon', names_to = 'Hit_depth') %>% 
+  drop_na(Taxon) %>% 
+  filter(str_length(Taxon) != 2, str_length(Taxon) != 1) %>%  # remove types of litters to reduce size of the dataset. 
+  group_by(PlotKey, Taxon) %>% 
+  add_count(name = 'total_cover')  %>% 
+  group_by(PlotKey) %>% 
+  mutate(percent_cover = total_cover/Pts_per_plot * 100) %>% 
+  distinct(Taxon, .keep_all = T) %>% 
+  dplyr::select(PlotKey, Taxon, percent_cover)
+
+LPIntercept <- bind_rows(LPIntercept_AIM, LPIntercept_LMF)
+
+rm(LMF_plots, AIM_plots, LPIntercept_AIM, LPIntercept_LMF)
+```
+
+## From the relative abundances of the plant species per plot we can work on classifying it using ranges of covers of a handful of plant species. 
+
+Here we quickly plot the relative covers of a number of plant species in these different strata type. Based on extensive field experience in the UFO we feel that this plants are capable of discriminating our four main strata.
+```{r Detect Ecologically relevant Percent Covers of Taxa in Plots}
+
+species <- c('ATCO', 'ATCO4', 'ATGA', 'LESA', 'PLJA', 'EPVI', 'SAVE4', # salt group
+    'AMUT', 'QUGA', 'CEMO2', 'SYRO', # MMS group
+    'PIED', 'JUOS', 'PEPU7', # PJ group
+    'ARTRW8', 'ARTRT', 'ARTRV', 'ARNO4', 'HECO26', 'CHDE' # Sagesteppe group
+    )
+LPIntercept <- LPIntercept %>% 
+  filter(Taxon %in% species) 
+
+LPIntercept_wide <- LPIntercept%>% 
+  pivot_wider(names_from  = Taxon, values_from = percent_cover) %>% 
+  mutate(across(.cols = everything(), ~ replace_na(.x, 0))) %>% 
+  column_to_rownames('PlotKey')
+
+LPIntercept_scaled <- scale(LPIntercept_wide) # rescale the variables 
+
+col_names <- colnames(LPIntercept_scaled)
+col_names <- col_names[order(match(col_names,species))]
+LPIntercept_scaled <- LPIntercept_scaled[, col_names]
+
+rm(species, col_names, LPIntercept_wide)
+```
+
+
+We want to determine whether the PSU sampling area is ubiquitous in stratum, or whether the plots differ. Theoretically at least 2 points were sampled in each PSU, if this is the case than their similarity makes classifying easier. 
+```{r}
+set.seed(42)
+veg_Clusters <- factoextra::hkmeans(LPIntercept_scaled, k = 4, hc.metric = "euclidean", hc.method = "ward.D2", iter.max = 1000, km.algorithm = "Hartigan-Wong")
+
+# veg_Clusters$centers
+# 1 is  Pinyon-Juniper
+# 2 is SS
+# 3 is Salt desert 
+# 4 is Mixed Mountain Shrub
+
+cluster_lookup <- tibble(VEGTYPE = c(1, 2, 3, 4), 
+                         STRATUM = c("PJ", "SS", "SD", "MMS")
+)
+
+factoextra::fviz_dend(veg_Clusters, cex = 0.6)
+factoextra::fviz_cluster(veg_Clusters, ellipse.type = "norm", ellipse.level = 0.68, geom = 'point') +
+  theme_bw() +
+  labs(
+  title = "K-means clustering of AIM points by Vegetation in the UFO, CO"
+) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# we can export the results from the analytical cluster object here. 
+reclassified_Strata <- tibble('PlotKey' = names(veg_Clusters$cluster),
+                          'VEGTYPE' = veg_Clusters$cluster) %>% 
+  left_join(., cluster_lookup, by = 'VEGTYPE') %>% 
+  left_join(., LPIntercept, by = 'PlotKey')
+
+rm(LPIntercept, LPIntercept_scaled, veg_Clusters, cluster_lookup)
+```
+
+
+Now that these data have been clustered we will try and determine how accurate this process was. 
+```{r Analyze the Results of the classification process}
+
+species <- tibble(
+  Veg_type = c(rep('SD', 7), rep('MMS', 4), rep('PJ', 3), rep('SS', 6)),
+  Taxon = 
+  c('ATCO', 'ATCO4', 'ATGA', 'LESA', 'PLJA', 'EPVI', 'SAVE4', # salt group
+    'AMUT', 'QUGA', 'CEMO2', 'SYRO', # MMS group
+    'PIED', 'JUOS', 'PEPU7', # PJ group
+    'ARTRW8', 'ARTRT', 'ARTRV', 'ARNO4', 'HECO26', 'CHDE' # Sagesteppe group
+    )
+)
+
+reclassified_Strata <- reclassified_Strata %>% 
+  left_join(., species, by = 'Taxon') %>% 
+  group_by(PlotKey, Veg_type) %>% 
+  mutate(total_cover_stratum = sum(percent_cover)) %>% 
+  distinct(PlotKey, Veg_type, total_cover_stratum, .keep_all = T) %>% 
+  arrange(total_cover_stratum) %>% 
+  ungroup(Veg_type) %>% 
+  slice_max(total_cover_stratum, with_ties = F)
+
+table1 <- reclassified_Strata %>% 
+  ungroup() %>% 
+  select('K-Means Stratum' = STRATUM, 'Dominant Veg Type' = Veg_type)
+table1 <- table(table1)
+
+'K_Means_Classified' = data.frame('Plots' = rowSums(table1)) |> t() |> data.frame()
+K_Means_Classified <- K_Means_Classified[,order(colnames(K_Means_Classified), decreasing = T)]
+rownames(K_Means_Classified) <- 'K_Means_Classified'
+'Reclassified' = data.frame('Plots' = colSums(table1)) |> t() |> data.frame()
+Reclassified <- Reclassified[,order(colnames(Reclassified), decreasing = T)]
+rownames(Reclassified) <- 'Reclassified'
+
+rbind(K_Means_Classified, Reclassified)
+# we see that a strongly supported Salt Desert group is returned.  But the classifier has issues with many of the other groups. 
+
+classified <- reclassified_Strata %>% 
+  select(PlotKey, Veg_type)
+
+rm(K_Means_Classified, Reclassified, species, table1, reclassified_Strata)
+```
+
+```{r Write out Results to shapefile for training classifier}
+
+LMF_plots <- st_read(p, layer = 'LMFPlots', quiet = T) %>%
+  select(PlotKey) %>% 
+  st_intersection(UFO_land, .) %>% 
+  mutate('Plot' = 'LMF') %>% 
+  rename(geometry = x) %>% 
+  st_set_geometry('geometry') %>% 
+  st_transform(26912) %>% 
+  st_buffer(25) 
+
+plots <- st_read(p, 'Plots', quiet = T) %>%
+  st_as_sf(coords = c('Longitude', 'Latitude'), crs = 4269) %>%
+  select(PlotKey) %>% 
+  st_intersection(., UFO_land) %>%
+  mutate('Plot' = 'AIM') %>% 
+  st_transform(26912) %>% 
+  st_buffer(30)  %>% 
+  bind_rows(., LMF_plots) %>% 
+  left_join(., classified, by = 'PlotKey') %>% 
+  st_transform(4269)
+
+fp <- file.path(here(), 'data/processed/reclassified_AIM')
+ifelse(!dir.exists(fp), dir.create(fp), FALSE)
+st_write(plots, file.path(fp, 'reclassified_AIM.shp'))
+
+rm(p, UFO_land, LMF_plots, classified, fp, plots)
+```
+
+
+
+
+
+the function below was not neccessary it seemed unable to grab the values which appear misclassified in the plots. 
+```{r}
+k_means_euclidean_classifer <- function(clusters){
+  #' this function serves to classify an indepedent dataset based on a k-means classification
+  #' k-means classification. Due to the seed values, there are always a few
+  #' strange records in within the clusters. The only required input is the 
+  #' results of factoextra::hkmeans - althought I assume it works with 
+  #' cluster objects from the (awesome 'base' =-/) stats package.
+  
+  euclidean_dist <- function(a, b) sqrt(sum((a - b)^2))
+  
+  centroids <- clusters$centers # pull out the target centroids
+  raw_data <- clusters$data # pull out the data we feed in
+  
+  # create an empty dataframe to populate with the reclassified plots. 
+  distance_results <- data.frame(
+    matrix(NA, 
+           ncol = nrow(centroids),
+           nrow = nrow(raw_data))
+    )
+  names(distance_results) <- seq(1:ncol(distance_results))
+  
+  for (i in 1:nrow(centroids)){
+    distance_results[,i] <- apply(raw_data, MARGIN = 1, FUN = euclidean_dist, centroids[i,])
+  }
+  
+  results <- data.frame('Sample' = rownames(raw_data),
+             'Cluster' = apply(distance_results, 1, which.min)
+  )
+  return(results)
+}
+```
+
+
+
+
+
+

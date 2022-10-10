@@ -1,0 +1,484 @@
+---
+title: "Vegetation_Classification"
+author: "steppe"
+date: "2022-10-03"
+output: html_document
+---
+
+The initial AIM sample design for each office was based upon small stratified areas - (Primary Sampling Units) PSU's which up to 3 plots per each of are to make inference of. The primary sampling units were based on older vegetation classification projects which do not perform as high as other mechanisms. 
+
+We have used the in field AIM data to reclassify a number of plots in unusual strata such as: 'Other', 'Mixed Conifer', and 'Riparian'. We will use all of this reclassified AIM data to determine whether the PSU on the whole is classified as the same vegetation type as the points which were sampled within it. 
+
+To do this a very simple vegetation classification will be performed using a handful of spatial products. The central product will be the National Aerial Imagery Programs flight data. Supplemental data includes a 10m DEM which was previously re-processed using WhiteBoxTools, a 10m resolution slope dataset, and a 10m landform classification dataset. 
+
+```{r Load Libraries}
+library(tidyverse)
+library(terra)
+library(sf)
+library(here)
+library(RStoolbox)
+set.seed(72)
+#install.packages('tigris', 'glcm', 'here')
+```
+
+# Methods 
+
+A training data set of XXX AIM plots was used ...
+
+```{r Import and Subset AIM, echo = F, eval = F}
+
+UFO_buffered <- st_read(
+  paste0(here(), '/data/raw/BLM_CO_Administrative_Units/', 'admu_ofc_poly.shp'),
+  quiet = T) %>% 
+  filter(ADMU_NAME == 'UNCOMPAHGRE FIELD OFFICE') %>% 
+ # st_buffer(32186) %>%  # buffer the FO by 20 miles
+  st_transform(4269) %>% 
+  dplyr::select(ADMU_NAME)
+
+AIM_plots <- st_read('/media/sagesteppe/ExternalHD/aimDB/summaries/TerrADat.shp', quiet = T) %>% 
+  dplyr::select(PrimaryKey:PlotID)
+AIM_plots <- st_intersection(UFO_buffered,  AIM_plots) %>% 
+  select(-ADMU_NAME)
+PIntercept <- read.csv('/media/sagesteppe/ExternalHD/aimDB/PIntercept.txt')
+
+plots <- left_join(AIM_plots, PIntercept, by = c('PrimaryKey' = 'PrimaryKey'))
+
+rm(UFO_buffered)
+```
+
+NAIP Imagery for Colorado 2019 was downloaded from the official repository at Box in Fall 2022. These raster tiles were united via mosaic, cropped to the extent of the Field Office Buffer, and masked to BLM administered surface areas. While decoding from Mrsid to tif file formats, their resolution was reduced by a factor of two using the 'mrsiddecode' program (Vers. 9.5.1.4427) from LizardTech.
+
+```{bash NAIP imagery extraction and decoding, eval = F, echo = F}
+
+sudo apt install libtbb-dev libgeos-dev
+# install the binary into your home directory 
+# http://bin.extensis.com/download/developer/MrSID_DSDK-9.5.1.4427-linux.x86-64.gcc48.tar.gz
+# you can test that it now works using an example like:
+./mrsiddecode -i infile.sid -o outfile.jpg
+
+# it unfortunately requires that we extract the .sid files from the .zip files!!! 
+cd /media/sagesteppe/ExternalHD/NAIP/raw_imagery/
+
+for file in *zip; do
+
+  in_path='/media/sagesteppe/ExternalHD/NAIP/raw_imagery/'
+  out_path='/media/sagesteppe/ExternalHD/NAIP/decoded/'
+  infilename="$in_path${file%.zip}/${file%.zip}.sid"
+  outfilename="$out_path${file%.zip}.tif"
+  
+  mkdir ${file%.zip}
+  unzip $file -d ${file%.zip}
+  ~/MrSID_DSDK-9.5.1.4427-linux.x86-64.gcc48/Raster_DSDK/bin/mrsiddecode -i $infilename -o  $outfilename -s 4
+  rm -r ${file%.zip} # reduce by  a factor of 4 from 60cm -> 120 -> 240 -> 960 and resample to align with DEM
+  
+  now=$(date)
+  printf "${file%.zip} was processed at: $now\n"
+  
+done
+
+```
+
+```{r NAIP imagery processing, echo = F, eval = F}
+
+# the first step is to verify that we have all relevant NAIP datasets - i.e. 
+# those which intersect the land owernship of the office
+UFO_land <- st_read(
+  paste0(here(), '/data/processed/UFO_Allotments/', 'UFO_Allotments.shp'),
+  quiet = T) %>% 
+  st_transform(4269) %>% 
+  st_union() %>% 
+  st_cast('POLYGON') %>% 
+  st_as_sf() %>% 
+  st_make_valid()
+
+target_counties <- tigris::counties(state = 'CO') %>% st_make_valid()
+target_counties <- target_counties[st_intersection(target_counties, UFO_land),] %>% 
+  dplyr::select(COUNTYFP, NAME) %>% 
+  st_make_valid()
+
+ggplot(UFO_land) +
+  geom_sf( fill = 'black') +
+  geom_sf(data = target_counties, fill = NA)
+
+# verify that you have downloaded and processed all relevant county tiles. 
+path <- '/media/sagesteppe/ExternalHD/NAIP/decoded'
+dl_naip <- list.files(path, pattern = 'tif$')
+dl_naip_tiles <- str_extract(dl_naip, '[a-z]{2}[0-9]{3}') %>% 
+  str_remove(., '[a-z]{2}') %>% 
+  unique()
+
+# Load raster datasets
+dl_naip <- file.path(path, dl_naip)
+dl_naip_IR <- dl_naip[grep('1-1_hn_s', dl_naip)]
+dl_naip_NC <- dl_naip[grep('1-1_hc_s', dl_naip)]
+
+naip_imagery_IR <- lapply(dl_naip_IR, rast)
+naip_imagery_NC <- lapply(dl_naip_NC, rast)
+
+target_counties <- target_counties[match(dl_naip_tiles, target_counties$COUNTYFP),]
+
+names(naip_imagery_IR) <- target_counties$NAME
+names(naip_imagery_NC) <- target_counties$NAME
+
+# rm(dl_naip, path, dl_naip_IR, dl_naip_NC, target_counties, dl_naip_tiles)
+
+# we need to transform the CRS of several rasters from UTM zone 13 to zone 12
+
+UFO_extent_12 <- vect(st_transform(UFO_land, 26912))
+UFO_extent_13 <- vect(st_transform(UFO_land, 26913))
+
+for (i in c(1:2,5:6)){
+  naip_imagery_IR[[i]] <- crop(naip_imagery_IR[[i]],  UFO_extent_13, mask = T) # reduce extent of files
+}
+for (i in c(3,4,7)){
+  naip_imagery_IR[[i]] <- crop(naip_imagery_IR[[i]],  UFO_extent_12, mask = T)
+}
+for (i in c(1,5,2)){
+  naip_imagery_IR[[i]] <- project(naip_imagery_IR[[i]],  y = naip_imagery_IR[[4]],
+                              method = 'bilinear', align = T, threads = 20)
+}
+naip_imagery_IR[[6]] <- project(naip_imagery_IR[[6]],  y = naip_imagery_IR[[5]],
+                              method = 'bilinear', align = T, threads = 20)
+
+naip_imagery_collection_IR <- sprc(naip_imagery_IR) # make a wide raster of all tiles
+UFO_NAIP_IR <- mosaic(naip_imagery_collection_IR) # create a single large product of rasters
+
+plot(UFO_NAIP_IR)
+
+path <- '/media/sagesteppe/ExternalHD/NAIP/'
+# dir.create(file.path(path, 'processed'))
+fname <- file.path(path, 'processed', 'IR_naip.tif')
+#tile_borders <- rast(ncols = 2, nrows = 2, crs = crs(UFO_NAIP_NC), 
+#                     xmin = xmin(UFO_NAIP_NC), xmax = xmax(UFO_NAIP_NC), 
+#                     ymax = ymax(UFO_NAIP_NC), ymin = ymin(UFO_NAIP_NC))
+#makeTiles(UFO_NAIP_NC, tile_borders, fname)
+writeRaster(UFO_NAIP_IR, fname)
+
+rm(naip_imagery_collection_IR, naip_imagery_collection_NC, naip_imagery_IR, naip_imagery_NC)
+```
+
+
+```{r Import processed NAIP imagery and resample to other products, echo = F}
+path <- '/media/sagesteppe/ExternalHD/NAIP/processed'
+files <- list.files(path)
+
+naip_IR <- files[grep('IR_naip.tif', files)]
+naip_NC <- files[grep('NC_naip.tif', files)]
+
+naip_IR <- rast(file.path(path, naip_IR))
+naip_NC <- rast(file.path(path, naip_NC))
+
+# now we will resample this product so that it aligns with the existing physiographic products we have. 
+
+dem <- rast(file.path( 'data/processed/'),
+            list.files(file.path('/data/processed')),
+            pattern = "dem.*smooth*\\.tif")
+
+naip_IR <- resample(naip_IR, dem, method = 'bilinear', threads = T, 
+                    filename = file.path(path, 'IR_naip_resamp.tif'))
+naip_NC <- resample(naip_NC, dem, method = 'bilinear', threads = T, 
+                    filename = file.path(path, 'NC_naip_resamp.tif'))
+```
+
+
+A Gray Level Co-occurrence Matrix (GLCM) was created using the glcm package to create a texture raster layer to aid in classification. Texture bands are, among other properties, capable of indicating the amounts of heterogeneity of habitat types across the landscape. 
+
+```{r Create Texture Raster band, echo = F}
+
+library(factoextra)
+library(FactoMineR)
+# https://zia207.github.io/geospatial-r-github.io/texture-analysis.html
+
+# we will perform different runs on the natural color and IR bands to develop the GLCM
+naip_IR_r <- raster::raster(naip_IR)
+naip_NC_r <- raster::raster(naip_NC)
+
+Sys.time()
+glcm.red <- glcm::glcm(naip_IR_r,
+                 window = c(5, 5), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
+                 statistics = c("mean", "variance", 'homogeneity', 'contrast', 'dissimilarity'), 
+                 min_x = 1, max_x = 255, na_opt = 'ignore', na_val = 0)
+Sys.time()
+
+Sys.time()
+glcm.colour <- glcm::glcm(naip_NC_r,
+                 window = c(7, 7), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
+                 statistics = c("mean", "variance", 'homogeneity', 'contrast', 'dissimilarity'), 
+                 min_x = 1, max_x = 255, na_opt = 'ignore', na_val = 0)
+Sys.time()
+
+rm(naip_IR_r, naip_NC_r)
+
+## we determine which bands contain the most variation using a PCA
+all_textures <- stack(glcm.red, glcm.colour)
+all_textures <- scale(all_textures, center = T) # scale the data before the function
+all_textures[is.na(all_textures)] <- 0 # define zero for all missing values
+
+path <- '/media/reed/ExternalHD/NAIP/processed'
+all_textures <- rast(file.path(path, 'all-textures.tif'))
+
+all_textures <- all_textures[[1:4]]
+### USE THIS !!!!!!! NOT WHAT IS BELOW. 
+
+sr <- values(spatSample(all_textures, 100000, as.raster=TRUE))
+pca <- prcomp(sr)
+plot(pca)
+text_PC <- predict(all_textures, pca)
+plot(text_PC)
+
+summary(pca)
+pca[["rotation"]]
+
+fviz_pca_var(pca,
+             col.var = "contrib", # Color by contributions to the PC
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             repel = TRUE     # Avoid text overlapping
+)
+
+get_pca_var(pca)
+pca$contrib
+
+# now select and write out bands with considerable influence to variation
+texture_PrincComponents <- c(text_PC[[c(1:2)]])
+names(texture_PrincComponents) <- paste0('principal_Component_1', 
+                                         rep(1:dim(texture_PrincComponents)[3]))
+plot(texture_PrincComponents)
+
+
+writeRaster(texture_PrincComponents, file.path(path, 'Textures_pca.tif'))
+
+# rm(texture_PrincComponents, all_textures, glcm.red, glcm.colour)
+```
+
+NAIP data were processed to create an NDVI band. NDVI is well suited for identifying sparsely vegetated areas. 
+
+```{r create NDVI band, echo = F}
+
+## create an NDVI band from the existing datasets - this helps identify sparsely vegetated areas. 
+
+# (NIR - Red) / (NIR + Red)
+
+naip_ndvi <- (naip_multispectral_br[[4]] - naip_multispectral_br[[1]]) / 
+  (naip_multispectral_br[[4]] + naip_multispectral_br[[1]])
+
+
+writeRaster(naip_ndvi, file.path(path, 'NDVI.tif'))
+```
+
+To create a more equally balanced training data set, all classified AIM points were exported to Google Earth. 150 random points were generated across the focal BLM district and classified in Google Earth via the vegetation ecologist which lead the AIM sampling in 2022. Additional records for each stratum, less Aspen forest, without enough points for balanced sampling were found by the vegetation ecologist and marked via Google Earth. 
+
+```{r Export reclassified AIM Points, echo = F, eval = F}
+
+rndm_VegPts <- st_read(
+  file.path(here(), '/data/processed/UFO_Allotments/', 'UFO_Allotments.shp'),
+  quiet = T) %>% 
+  st_union() %>% 
+  vect()
+
+rndm_VegPts <- rndm_VegPts
+  spatSample(size = 150, method="random") %>% 
+  st_as_sf() %>% 
+  mutate(ID = 1:n()) %>% 
+  select(ID) %>% 
+  st_transform(4326) %>% 
+  as('Spatial')
+
+maptools::kmlPoints(rndm_VegPts, kmlfile = '../data/raw/UFO_Random_Veg_pts.kml', 
+          name = rndm_VegPts[['ID']], kmlname = 'Random_Veg_pts')
+
+# we will also write a CSV for noting the results quickly. 
+rndm_VegPts <- rndm_VegPts %>% 
+  st_as_sf() %>% 
+  mutate('VegClass' = "",
+    'Longitude' = st_coordinates(.)[,1],
+    'Latitude' = st_coordinates(.)[,2]) %>% 
+  st_drop_geometry() 
+write.csv(rndm_VegPts, file = '../data/raw/UFO_Random_Veg_pts.csv' , row.names = F)
+
+rglr_VegPts <- rndm_VegPts %>% 
+  spatSample(size = 150, method="regular") %>% 
+  st_as_sf() %>% 
+  mutate(ID = 1:n()) %>% 
+  select(ID) %>% 
+  st_transform(4326) %>% 
+  as('Spatial')
+  
+maptools::kmlPoints(rglr_VegPts, kmlfile = '../data/raw/UFO_Regular_Veg_pts.kml', 
+          name = rglr_VegPts[['ID']], kmlname = 'Regular_Veg_pts')
+
+# we will also write a CSV for noting the results quickly. 
+rglr_VegPts <- rglr_VegPts %>% 
+  st_as_sf() %>% 
+  mutate('VegClass' = "",
+    'Longitude' = st_coordinates(.)[,1],
+    'Latitude' = st_coordinates(.)[,2]) %>% 
+  st_drop_geometry() 
+write.csv(rglr_VegPts, file = '../data/raw/UFO_Regular_Veg_pts.csv' , row.names = F)
+
+rm(rndm_VegPts)
+```
+
+Classified plots were randomly sampled to ensure an equal number of points per stratum, less Aspen and Mixed Conifer.
+
+```{r buffer all samples to AIM plot sizes, echo = F, eval = F}
+
+p <- file.path(here::here(), 'data/processed')
+
+reg_pts <- read.csv(file.path(p, 'UFO_Regular_Veg_pts-CLASSIFIED.csv')) %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
+  mutate(Type = 'Regular', .after = 'ID')
+
+computer_pts <- read.csv(file.path(p, 'UFO_Regular_Veg_pts-CLASSIFIED.csv')) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
+  mutate(Type = 'Random', .after = 'ID') %>% 
+  
+  bind_rows(reg_pts) %>% 
+  st_transform(26912) %>% 
+  st_buffer(30) %>% 
+  mutate(ID = as.character(ID)) %>% 
+  mutate(across(where(is.character), ~na_if(., ""))) %>%
+  filter(VegClass %in% c('PJ', 'SD', 'SS'))
+
+# AIM DATA post K-Means is read in here
+veg_pts <- st_read(file.path(p, '/reclassified_AIM/reclassified_AIM.shp'), quiet = T) %>% 
+  st_transform(26912) %>% 
+  st_buffer(30) %>% 
+  rename(ID = PlotKey, Type = Plot, VegClass = Veg_type) %>% 
+  bind_rows(., computer_pts) %>% 
+  drop_na()
+
+rm(reg_pts, computer_pts, reg_pts)
+```
+
+https://valentinitnelav.github.io/satellite-image-classification-r/
+
+```{r Import all Geographic Data and extract occurrences to points}
+
+UFO_land <- st_read(
+  paste0(here(), '/data/processed/UFO_Allotments/', 'UFO_Allotments.shp'),
+  quiet = T) %>% 
+  st_transform(4269) %>% 
+  st_union() %>% 
+  st_cast('POLYGON') %>% 
+  st_as_sf() %>% 
+  st_make_valid() %>% 
+  st_transform(26912) %>% 
+  vect()
+
+path <- '/media/reed/ExternalHD/NAIP/processed'
+files <- list.files(path)
+
+naip_NC <- rast(file.path(
+  path, files[grep('NC_naip.tif', files)]))
+
+texture <- rast(file.path(
+  path, files[grep('all-textures.tif', files)]))[[c(1:2)]]
+texture <- resample(texture, naip_NC, method = 'cubicspline')
+
+PhysioPath <- '/home/reed/AIM_Field/data/processed'
+DEM <- rast(file.path(PhysioPath,
+            list.files(PhysioPath,
+            pattern = "dem.*smooth_UTM*\\.tif")))
+DEM <- crop(DEM,  UFO_land, mask = T)
+DEM <- resample(DEM, naip_NC, method = 'cubicspline')
+
+slope <- rast(file.path(PhysioPath,
+            list.files(PhysioPath,
+            pattern = "slope*")))
+slope <- terra::project(slope,  y = DEM, method = 'cubicspline', align = T)
+slope <- crop(slope,  UFO_land, mask = T)
+slope <- resample(slope, naip_NC, method = 'cubicspline')
+
+predictors <- c(naip_NC, texture, DEM, slope)
+names(predictors) <- c('NAIP_red', 'NAIP_green', 'NAIP_blue', 'glcm_mean',
+                       'glcm_variance', 'DEM', 'slope')
+plot(predictors)
+
+rm(naip_NC, texture, DEM, slope, PhysioPath, UFO_land, files)
+```
+
+```{r Extract Predictor Variables to Points}
+library(caret)
+
+VegClass <- extract(predictors, rand_pts, method = 'bilinear', weights = T,  fun = mean)
+VegClass <- cbind(as.data.frame(rand_pts), VegClass[,2:ncol(VegClass)])
+VegClass <- VegClass[complete.cases(VegClass),]
+VegClass <- cbind(VegClass[,4:ncol(VegClass)], 'class' = VegClass[,3])
+VegClass$class <- as.factor(VegClass$class)
+
+split_obs <- createDataPartition(VegClass$class,
+                                 p = 0.7, # percentage of data as training
+                                 list = FALSE)
+
+train <- VegClass[split_obs,]
+test <- VegClass[-split_obs,]
+```
+
+
+```{r Fit Model}
+library(parallel)
+library(doParallel)
+library(mlbench)
+
+n_folds <- 10
+folds <- createFolds(1:nrow(train), k = n_folds)
+# Set the seed at each resampling iteration. Useful when running CV in parallel.
+seeds <- vector(mode = "list", length = n_folds + 1) # +1 for the final model
+for(i in 1:n_folds) seeds[[i]] <- sample.int(1000, n_folds)
+seeds[n_folds + 1] <- sample.int(1000, 1) # seed for the final mod
+
+# define the controls for the model generation
+ctrl <- trainControl(summaryFunction = multiClassSummary,
+                     method = "cv",
+                     number = n_folds,
+                     search = "grid",
+                     classProbs = TRUE, # not implemented for SVM; will just get a warning
+                     savePredictions = TRUE,
+                     index = folds,
+                     seeds = seeds)
+
+cl <- makeCluster(detectCores())
+registerDoParallel(cl)
+model_rf <- caret::train(class ~ ., method = "rf", data = train,
+                         importance = TRUE, # passed to randomForest()
+                         # run CV process in parallel;
+                         allowParallel = TRUE,
+                       #  tuneGrid = data.frame(mtry = c(2, 3, 4, 5, 8)),
+                         trControl = ctrl)
+stopCluster(cl); remove(cl)
+
+
+plot(model_rf)
+cm_rf <- confusionMatrix(data = predict(model_rf, newdata = test),
+                         test$class)
+cm_rf
+
+library(plotly)
+caret::varImp(model_rf)$importance %>%
+  as.matrix %>% 
+  plot_ly(x = colnames(.), y = rownames(.), z = ., type = "heatmap",
+          width = 350, height = 300)
+
+# predict model onto raster
+predict_rf <- terra::predict(object = predictors, model = model_rf, cpkgs = 'caret',
+                     filename = file.path(here(), '/data/processed/PredictedVegClass.tif'), 
+                     overwrite = T)
+
+predict_rf <- rast(file.path(here(), '/data/processed/PredictedVegClass.tif'))
+
+
+plot(predict_rf)
+plot(predictors[[1]])
+
+dim(predictors)
+```
+
+
+# Citations
+
+```{r}
+c("terra", "glcm", "RStoolbox", "caret") %>%
+  map(citation) %>%
+  print(style = "text")
+```
+
