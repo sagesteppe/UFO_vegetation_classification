@@ -190,8 +190,12 @@ library(FactoMineR)
 # https://zia207.github.io/geospatial-r-github.io/texture-analysis.html
 
 # we will perform different runs on the natural color and IR bands to develop the GLCM
-naip_IR_r <- raster::raster(naip_IR)
-naip_NC_r <- raster::raster(naip_NC)
+
+path <- '/media/reed/ExternalHD/NAIP/processed'
+files <- list.files(path, pattern = 'resample')
+
+naip_IR_r <- raster::raster(file.path(path, files[grep('IR*', files)]))
+naip_NC_r <- raster::raster(file.path(path, files[grep('NC*', files)]))
 
 Sys.time()
 glcm.red <- glcm::glcm(naip_IR_r,
@@ -202,7 +206,7 @@ Sys.time()
 
 Sys.time()
 glcm.colour <- glcm::glcm(naip_NC_r,
-                 window = c(7, 7), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
+                 window = c(5, 5), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
                  statistics = c("mean", "variance", 'homogeneity', 'contrast', 'dissimilarity'), 
                  min_x = 1, max_x = 255, na_opt = 'ignore', na_val = 0)
 Sys.time()
@@ -210,40 +214,32 @@ Sys.time()
 rm(naip_IR_r, naip_NC_r)
 
 ## we determine which bands contain the most variation using a PCA
-all_textures <- stack(glcm.red, glcm.colour)
+all_textures <- c(glcm.red, glcm.colour)
 all_textures <- scale(all_textures, center = T) # scale the data before the function
 all_textures[is.na(all_textures)] <- 0 # define zero for all missing values
 
-path <- '/media/reed/ExternalHD/NAIP/processed'
-all_textures <- rast(file.path(path, 'all-textures.tif'))
+texture_values <- values(spatSample(all_textures, 
+                                    ((dim(all_textures)[1] * dim(all_textures)[2]) * 0.05), 
+                        as.raster=TRUE))
+rf_veg_pca <- prcomp(texture_values)
 
-all_textures <- all_textures[[1:4]]
-### USE THIS !!!!!!! NOT WHAT IS BELOW. 
-
-sr <- values(spatSample(all_textures, 100000, as.raster=TRUE))
-pca <- prcomp(sr)
-plot(pca)
-text_PC <- predict(all_textures, pca)
-plot(text_PC)
-
-summary(pca)
-pca[["rotation"]]
-
-fviz_pca_var(pca,
+fviz_pca_var(rf_veg_pca,
              col.var = "contrib", # Color by contributions to the PC
              gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
              repel = TRUE     # Avoid text overlapping
 )
+summary(rf_veg_pca)
+rf_veg_pca[["rotation"]]
 
-get_pca_var(pca)
-pca$contrib
+texture_PC <- predict(all_textures, rf_veg_pca)
+plot(text_PC)
+
 
 # now select and write out bands with considerable influence to variation
-texture_PrincComponents <- c(text_PC[[c(1:2)]])
+texture_PrincComponents <- c(texture_PC[[c(1:2)]])
 names(texture_PrincComponents) <- paste0('principal_Component_1', 
                                          rep(1:dim(texture_PrincComponents)[3]))
 plot(texture_PrincComponents)
-
 
 writeRaster(texture_PrincComponents, file.path(path, 'Textures_pca.tif'))
 
@@ -271,51 +267,68 @@ To create a more equally balanced training data set, all classified AIM points w
 
 rndm_VegPts <- st_read(
   file.path(here(), '/data/processed/UFO_Allotments/', 'UFO_Allotments.shp'),
-  quiet = T) %>% 
-  st_union() %>% 
+  quiet = T) %>%
+  st_union() %>%
   vect()
 
 rndm_VegPts <- rndm_VegPts
-  spatSample(size = 150, method="random") %>% 
-  st_as_sf() %>% 
-  mutate(ID = 1:n()) %>% 
-  select(ID) %>% 
-  st_transform(4326) %>% 
+  spatSample(size = 150, method="random") %>%
+  st_as_sf() %>%
+  mutate(ID = 1:n()) %>%
+  select(ID) %>%
+  st_transform(4326) %>%
   as('Spatial')
 
-maptools::kmlPoints(rndm_VegPts, kmlfile = '../data/raw/UFO_Random_Veg_pts.kml', 
+rndm_VegPts2 <- rndm_VegPts %>%
+  spatSample(size = 250, method="random") %>%
+  st_as_sf() %>%
+  mutate(ID = 1:n()) %>%
+  select(ID) %>%
+  st_transform(4326) %>%
+  as('Spatial')
+ 
+maptools::kmlPoints(rndm_VegPts, kmlfile = '../data/raw/UFO_Random_Veg_pts.kml',
           name = rndm_VegPts[['ID']], kmlname = 'Random_Veg_pts')
+maptools::kmlPoints(rndm_VegPts2, kmlfile = '../data/raw/UFO_Random_Veg_pts2.kml',
+          name = rndm_VegPts2[['ID']], kmlname = 'Random_Veg_pts2')
 
-# we will also write a CSV for noting the results quickly. 
-rndm_VegPts <- rndm_VegPts %>% 
-  st_as_sf() %>% 
+# we will also write a CSV for noting the results quickly.
+rndm_VegPts <- rndm_VegPts %>%
+  st_as_sf() %>%
   mutate('VegClass' = "",
     'Longitude' = st_coordinates(.)[,1],
-    'Latitude' = st_coordinates(.)[,2]) %>% 
-  st_drop_geometry() 
+    'Latitude' = st_coordinates(.)[,2]) %>%
+  st_drop_geometry()
 write.csv(rndm_VegPts, file = '../data/raw/UFO_Random_Veg_pts.csv' , row.names = F)
+rndm_VegPts2 <- rndm_VegPts2 %>%
+  st_as_sf() %>%
+  mutate('VegClass' = "",
+    'Longitude' = st_coordinates(.)[,1],
+    'Latitude' = st_coordinates(.)[,2]) %>%
+  st_drop_geometry()
+write.csv(rndm_VegPts2, file = '../data/raw/UFO_Random_Veg_pts2.csv' , row.names = F)
 
-rglr_VegPts <- rndm_VegPts %>% 
-  spatSample(size = 150, method="regular") %>% 
-  st_as_sf() %>% 
-  mutate(ID = 1:n()) %>% 
-  select(ID) %>% 
-  st_transform(4326) %>% 
+rglr_VegPts <- rndm_VegPts %>%
+  spatSample(size = 150, method="regular") %>%
+  st_as_sf() %>%
+  mutate(ID = 1:n()) %>%
+  select(ID) %>%
+  st_transform(4326) %>%
   as('Spatial')
-  
-maptools::kmlPoints(rglr_VegPts, kmlfile = '../data/raw/UFO_Regular_Veg_pts.kml', 
+ 
+maptools::kmlPoints(rglr_VegPts, kmlfile = '../data/raw/UFO_Regular_Veg_pts.kml',
           name = rglr_VegPts[['ID']], kmlname = 'Regular_Veg_pts')
 
-# we will also write a CSV for noting the results quickly. 
-rglr_VegPts <- rglr_VegPts %>% 
-  st_as_sf() %>% 
+# we will also write a CSV for noting the results quickly.
+rglr_VegPts <- rglr_VegPts %>%
+  st_as_sf() %>%
   mutate('VegClass' = "",
     'Longitude' = st_coordinates(.)[,1],
-    'Latitude' = st_coordinates(.)[,2]) %>% 
-  st_drop_geometry() 
+    'Latitude' = st_coordinates(.)[,2]) %>%
+  st_drop_geometry()
 write.csv(rglr_VegPts, file = '../data/raw/UFO_Regular_Veg_pts.csv' , row.names = F)
 
-rm(rndm_VegPts)
+rm(rndm_VegPts, rndm_VegPts2)
 ```
 
 Classified plots were randomly sampled to ensure an equal number of points per stratum, less Aspen and Mixed Conifer.
@@ -460,15 +473,30 @@ caret::varImp(model_rf)$importance %>%
           width = 350, height = 300)
 
 # predict model onto raster
-predict_rf <- terra::predict(object = predictors, model = model_rf, cpkgs = 'caret',
-                     filename = file.path(here(), '/data/processed/PredictedVegClass.tif'), 
-                     overwrite = T)
+# ALTERNATIVE USING RANDOM FOREST PACKAGE
 
+library(parallel)
+library(doParallel)
+
+cl <- makeCluster(detectCores()-2)
+registerDoParallel(cl)
+veg_rf_model <- randomForest(class~., data=VegClass, proximity=TRUE)
+stopCluster(cl); remove(cl)
+
+print(veg_rf_model)
+print(importance(veg_rf_model,type = 2))
+
+# generate a confusion matrix to determine accuracy on real data.
+test_prediction <- predict(veg_rf_model, test)
+confusionMatrix(test_prediction, test$class)
+
+# predict model onto raster
+predict_rf <- terra::predict(object = predictors, model = veg_rf_model, cpkgs = 'randomForest',
+                     filename = file.path(here(), '/data/processed/PredictedVegClass.tif'),
+                     overwrite = T)
 predict_rf <- rast(file.path(here(), '/data/processed/PredictedVegClass.tif'))
 
-
 plot(predict_rf)
-plot(predictors[[1]])
 
 dim(predictors)
 ```
