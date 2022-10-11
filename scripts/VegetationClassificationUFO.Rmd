@@ -199,17 +199,22 @@ naip_NC_r <- raster::raster(file.path(path, files[grep('NC*', files)]))
 
 Sys.time()
 glcm.red <- glcm::glcm(naip_IR_r,
-                 window = c(5, 5), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
+                 window = c(4, 4), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
                  statistics = c("mean", "variance", 'homogeneity', 'contrast', 'dissimilarity'), 
                  min_x = 1, max_x = 255, na_opt = 'ignore', na_val = 0)
 Sys.time()
 
 Sys.time()
 glcm.colour <- glcm::glcm(naip_NC_r,
-                 window = c(5, 5), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
+                 window = c(4, 4), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
                  statistics = c("mean", "variance", 'homogeneity', 'contrast', 'dissimilarity'), 
                  min_x = 1, max_x = 255, na_opt = 'ignore', na_val = 0)
 Sys.time()
+
+writeRaster(glcm.colour, file.path(path, 'glcm_colour_textures.tif'))
+
+glcm.colour <- rast(glcm.colour)
+glcm.red <- rast(file.path(path, 'glcm_red_textures.tif'))
 
 rm(naip_IR_r, naip_NC_r)
 
@@ -222,48 +227,45 @@ texture_values <- values(spatSample(all_textures,
                                     ((dim(all_textures)[1] * dim(all_textures)[2]) * 0.05), 
                         as.raster=TRUE))
 rf_veg_pca <- prcomp(texture_values)
+texture_PC <- predict(all_textures, rf_veg_pca)
 
 fviz_pca_var(rf_veg_pca,
              col.var = "contrib", # Color by contributions to the PC
              gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
              repel = TRUE     # Avoid text overlapping
 )
+
 summary(rf_veg_pca)
 rf_veg_pca[["rotation"]]
 
-texture_PC <- predict(all_textures, rf_veg_pca)
-plot(text_PC)
-
-
 # now select and write out bands with considerable influence to variation
-texture_PrincComponents <- c(texture_PC[[c(1:2)]])
-names(texture_PrincComponents) <- paste0('principal_Component_1', 
+texture_PrincComponents <- c(texture_PC[[c(1:2)]])  ### this is cumulative 0.92 prop.
+names(texture_PrincComponents) <- paste0('principal_Component', 
                                          rep(1:dim(texture_PrincComponents)[3]))
-plot(texture_PrincComponents)
 
+texture_PrincComponents[texture_PrincComponents < 0 ] <- NA
 writeRaster(texture_PrincComponents, file.path(path, 'Textures_pca.tif'))
 
-# rm(texture_PrincComponents, all_textures, glcm.red, glcm.colour)
+naip <- rast(file.path(path, files[grep('IR*', files)]))
+dim(naip)
+
+rm(texture_PrincComponents, all_textures, glcm.red, glcm.colour, texture_values, rf_veg_pca, texture_PC, files)
 ```
 
-NAIP data were processed to create an NDVI band. NDVI is well suited for identifying sparsely vegetated areas. 
+NAIP data were processed to create an NDVI band. NDVI is well suited for identifying sparsely vegetated areas, it may be useful in distinguishing salt desert from all other strata, and help in distinguishing between MMS and PJ. 
 
 ```{r create NDVI band, echo = F}
-
-## create an NDVI band from the existing datasets - this helps identify sparsely vegetated areas. 
-
 # (NIR - Red) / (NIR + Red)
 
-naip_ndvi <- (naip_multispectral_br[[4]] - naip_multispectral_br[[1]]) / 
-  (naip_multispectral_br[[4]] + naip_multispectral_br[[1]])
-
+naip_ndvi <- (naip_IR[[1]] - naip_NC[[1]]) / (naip_IR[[1]] + naip_NC[[1]])
+plot(naip_ndvi) # see the green up at the boundaries with forest service.
 
 writeRaster(naip_ndvi, file.path(path, 'NDVI.tif'))
 ```
 
 To create a more equally balanced training data set, all classified AIM points were exported to Google Earth. 150 random points were generated across the focal BLM district and classified in Google Earth via the vegetation ecologist which lead the AIM sampling in 2022. Additional records for each stratum, less Aspen forest, without enough points for balanced sampling were found by the vegetation ecologist and marked via Google Earth. 
 
-```{r Export reclassified AIM Points, echo = F, eval = F}
+```{r Export Points for Manual Classification in Google Earth, echo = F, eval = F}
 
 rndm_VegPts <- st_read(
   file.path(here(), '/data/processed/UFO_Allotments/', 'UFO_Allotments.shp'),
@@ -333,7 +335,7 @@ rm(rndm_VegPts, rndm_VegPts2)
 
 Classified plots were randomly sampled to ensure an equal number of points per stratum, less Aspen and Mixed Conifer.
 
-```{r buffer all samples to AIM plot sizes, echo = F, eval = F}
+```{r Read in classified points from GE and AIM and buffer, echo = F, eval = F}
 
 p <- file.path(here::here(), 'data/processed')
 
@@ -341,11 +343,15 @@ reg_pts <- read.csv(file.path(p, 'UFO_Regular_Veg_pts-CLASSIFIED.csv')) %>%
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
   mutate(Type = 'Regular', .after = 'ID')
 
-computer_pts <- read.csv(file.path(p, 'UFO_Regular_Veg_pts-CLASSIFIED.csv')) %>%
+computer_pts1 <- read.csv(file.path(p, 'UFO_Random_Veg_pts2-CLASSIFIED.csv')) %>% 
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
-  mutate(Type = 'Random', .after = 'ID') %>% 
+  mutate(Type = 'Random2', .after = 'ID')
   
-  bind_rows(reg_pts) %>% 
+computer_pts <- read.csv(file.path(p, 'UFO_Random_Veg_pts-CLASSIFIED.csv')) %>%
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
+  mutate(Type = 'Random1', .after = 'ID') %>% 
+  
+  bind_rows(., computer_pts1, reg_pts) %>% 
   st_transform(26912) %>% 
   st_buffer(30) %>% 
   mutate(ID = as.character(ID)) %>% 
@@ -354,13 +360,13 @@ computer_pts <- read.csv(file.path(p, 'UFO_Regular_Veg_pts-CLASSIFIED.csv')) %>%
 
 # AIM DATA post K-Means is read in here
 veg_pts <- st_read(file.path(p, '/reclassified_AIM/reclassified_AIM.shp'), quiet = T) %>% 
-  st_transform(26912) %>% 
-  st_buffer(30) %>% 
+  st_transform(26912) %>%  # these alreday buffered by type. 
   rename(ID = PlotKey, Type = Plot, VegClass = Veg_type) %>% 
   bind_rows(., computer_pts) %>% 
-  drop_na()
+  drop_na() %>% 
+  vect()
 
-rm(reg_pts, computer_pts, reg_pts)
+rm(reg_pts, computer_pts, computer_pts1)
 ```
 
 https://valentinitnelav.github.io/satellite-image-classification-r/
@@ -378,17 +384,21 @@ UFO_land <- st_read(
   st_transform(26912) %>% 
   vect()
 
-path <- '/media/reed/ExternalHD/NAIP/processed'
+path <- '/media/sagesteppe/ExternalHD/NAIP/processed'
 files <- list.files(path)
 
 naip_NC <- rast(file.path(
-  path, files[grep('NC_naip.tif', files)]))
+  path, files[grep('NC_naip_resample.tif', files)]))
+naip_IR <- rast(file.path(
+  path, files[grep('IR_naip_resample.tif', files)]))[[1]]
+NDVI <- rast(file.path(
+  path, files[grep('NDVI.tif', files)]))
 
 texture <- rast(file.path(
-  path, files[grep('all-textures.tif', files)]))[[c(1:2)]]
-texture <- resample(texture, naip_NC, method = 'cubicspline')
+  path, files[grep('Textures_pca.tif', files)]))
+# texture <- resample(texture, naip_NC, method = 'cubicspline')
 
-PhysioPath <- '/home/reed/AIM_Field/data/processed'
+PhysioPath <- '/media/sagesteppe/ExternalHD/AIM_Field_rasters'
 DEM <- rast(file.path(PhysioPath,
             list.files(PhysioPath,
             pattern = "dem.*smooth_UTM*\\.tif")))
@@ -402,19 +412,21 @@ slope <- terra::project(slope,  y = DEM, method = 'cubicspline', align = T)
 slope <- crop(slope,  UFO_land, mask = T)
 slope <- resample(slope, naip_NC, method = 'cubicspline')
 
-predictors <- c(naip_NC, texture, DEM, slope)
-names(predictors) <- c('NAIP_red', 'NAIP_green', 'NAIP_blue', 'glcm_mean',
-                       'glcm_variance', 'DEM', 'slope')
-plot(predictors)
+predictors <- c(naip_NC, naip_IR, NDVI, texture, DEM, slope)
+names(predictors) <- c('NAIP_red', 'NAIP_green', 'NAIP_blue', 'NAIP_IR', 'NDVI', 
+                       'GLCM_PC1', 'GLCM_PC2', 'DEM', 'Slope')
 
-rm(naip_NC, texture, DEM, slope, PhysioPath, UFO_land, files)
+rm(naip_NC, texture, DEM, slope, PhysioPath, UFO_land, files, naip_IR, NDVI, path)
 ```
 
-```{r Extract Predictor Variables to Points}
+```{r Extract Predictor Variables to Points, message = F, warning = 'hide'}
 library(caret)
+library(parallel)
+library(doParallel)
+library(randomForest)
 
-VegClass <- extract(predictors, rand_pts, method = 'bilinear', weights = T,  fun = mean)
-VegClass <- cbind(as.data.frame(rand_pts), VegClass[,2:ncol(VegClass)])
+VegClass <- extract(predictors, veg_pts, method = 'bilinear',  fun = mean)
+VegClass <- cbind(as.data.frame(veg_pts), VegClass[,2:ncol(VegClass)])
 VegClass <- VegClass[complete.cases(VegClass),]
 VegClass <- cbind(VegClass[,4:ncol(VegClass)], 'class' = VegClass[,3])
 VegClass$class <- as.factor(VegClass$class)
@@ -422,83 +434,50 @@ VegClass$class <- as.factor(VegClass$class)
 split_obs <- createDataPartition(VegClass$class,
                                  p = 0.7, # percentage of data as training
                                  list = FALSE)
-
 train <- VegClass[split_obs,]
 test <- VegClass[-split_obs,]
 ```
 
 
-```{r Fit Model}
-library(parallel)
-library(doParallel)
-library(mlbench)
+```{r Fit Random Forest Model, warning = F, message = F}
 
-n_folds <- 10
-folds <- createFolds(1:nrow(train), k = n_folds)
-# Set the seed at each resampling iteration. Useful when running CV in parallel.
-seeds <- vector(mode = "list", length = n_folds + 1) # +1 for the final model
-for(i in 1:n_folds) seeds[[i]] <- sample.int(1000, n_folds)
-seeds[n_folds + 1] <- sample.int(1000, 1) # seed for the final mod
-
-# define the controls for the model generation
-ctrl <- trainControl(summaryFunction = multiClassSummary,
-                     method = "cv",
-                     number = n_folds,
-                     search = "grid",
-                     classProbs = TRUE, # not implemented for SVM; will just get a warning
-                     savePredictions = TRUE,
-                     index = folds,
-                     seeds = seeds)
-
-cl <- makeCluster(detectCores())
-registerDoParallel(cl)
-model_rf <- caret::train(class ~ ., method = "rf", data = train,
-                         importance = TRUE, # passed to randomForest()
-                         # run CV process in parallel;
-                         allowParallel = TRUE,
-                       #  tuneGrid = data.frame(mtry = c(2, 3, 4, 5, 8)),
-                         trControl = ctrl)
-stopCluster(cl); remove(cl)
-
-
-plot(model_rf)
-cm_rf <- confusionMatrix(data = predict(model_rf, newdata = test),
-                         test$class)
-cm_rf
-
-library(plotly)
-caret::varImp(model_rf)$importance %>%
-  as.matrix %>% 
-  plot_ly(x = colnames(.), y = rownames(.), z = ., type = "heatmap",
-          width = 350, height = 300)
-
-# predict model onto raster
-# ALTERNATIVE USING RANDOM FOREST PACKAGE
-
-library(parallel)
-library(doParallel)
+opt_mtry <- tuneRF(train,train$class, ntreeTry= 10000, doBest=TRUE,
+               stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE)
 
 cl <- makeCluster(detectCores()-2)
 registerDoParallel(cl)
-veg_rf_model <- randomForest(class~., data=VegClass, proximity=TRUE)
+veg_rf_model <- randomForest(class~., data=train, proximity=TRUE, 
+                             ntree = 10000, mtry = 3)
 stopCluster(cl); remove(cl)
 
-print(veg_rf_model)
-print(importance(veg_rf_model,type = 2))
+data.frame(print(importance(veg_rf_model, type = 2))) %>% 
+  rownames_to_column('Variable') %>% 
+  arrange(-MeanDecreaseGini) %>% 
+  knitr::kable()
 
+plot(veg_rf_model)
 # generate a confusion matrix to determine accuracy on real data.
 test_prediction <- predict(veg_rf_model, test)
 confusionMatrix(test_prediction, test$class)
 
+# rm(cl, mtry, best.m)
+```
+
+
+```{r Predict random forest onto raster and smooth it. }
 # predict model onto raster
 predict_rf <- terra::predict(object = predictors, model = veg_rf_model, cpkgs = 'randomForest',
                      filename = file.path(here(), '/data/processed/PredictedVegClass.tif'),
                      overwrite = T)
 predict_rf <- rast(file.path(here(), '/data/processed/PredictedVegClass.tif'))
 
-plot(predict_rf)
+# smooth the raster using focal statistics, we will find the mode in a rolling 
+# window and re-assign values based upon that. 
+predict_rf_smooth <- focal(predict_rf, w = 2, na.policy= 'omit')
 
-dim(predictors)
+modal(x,ties='random', na.rm=FALSE, freq=FALSE)
+
+plot(predict_rf, col = c('Red', '#2C664F', '#F8F5E6', '#B2AC88'))
 ```
 
 
