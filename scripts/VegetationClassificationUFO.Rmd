@@ -16,14 +16,13 @@ library(tidyverse)
 library(terra)
 library(sf)
 library(here)
-library(RStoolbox)
 set.seed(72)
 #install.packages('tigris', 'glcm', 'here')
 ```
 
 # Methods 
 
-A training data set of XXX AIM plots was used ...
+A data set of XXX AIM plots was used ...
 
 ```{r Import and Subset AIM, echo = F, eval = F}
 
@@ -46,7 +45,7 @@ plots <- left_join(AIM_plots, PIntercept, by = c('PrimaryKey' = 'PrimaryKey'))
 rm(UFO_buffered)
 ```
 
-NAIP Imagery for Colorado 2019 was downloaded from the official repository at Box in Fall 2022. These raster tiles were united via mosaic, cropped to the extent of the Field Office Buffer, and masked to BLM administered surface areas. While decoding from Mrsid to tif file formats, their resolution was reduced by a factor of two using the 'mrsiddecode' program (Vers. 9.5.1.4427) from LizardTech.
+NAIP Imagery for Colorado 2019 was downloaded from the official repository at Box in Fall 2022. While decoding from MrSID to tif file formats, their resolution was reduced by a factor of two using the 'mrsiddecode' program (Vers. 9.5.1.4427) from LizardTech. These raster tiles were united via mosaic, cropped to the extent of the Field Office Buffer, and masked to BLM administered surface areas. and they were aligned with previously generated raster datasets derived from a 10m DEM. 
 
 ```{bash NAIP imagery extraction and decoding, eval = F, echo = F}
 
@@ -180,10 +179,9 @@ naip_NC <- resample(naip_NC, dem, method = 'bilinear', threads = T,
                     filename = file.path(path, 'NC_naip_resamp.tif'))
 ```
 
-
 A Gray Level Co-occurrence Matrix (GLCM) was created using the glcm package to create a texture raster layer to aid in classification. Texture bands are, among other properties, capable of indicating the amounts of heterogeneity of habitat types across the landscape. 
 
-```{r Create Texture Raster band, echo = F}
+```{r Create Texture Raster band, echo = F, eval = F}
 
 library(factoextra)
 library(FactoMineR)
@@ -193,6 +191,7 @@ library(FactoMineR)
 
 path <- '/media/reed/ExternalHD/NAIP/processed'
 files <- list.files(path, pattern = 'resample')
+stats <- c("mean", "variance", 'homogeneity', 'contrast', 'dissimilarity'))
 
 naip_IR_r <- raster::raster(file.path(path, files[grep('IR*', files)]))
 naip_NC_r <- raster::raster(file.path(path, files[grep('NC*', files)]))
@@ -200,14 +199,14 @@ naip_NC_r <- raster::raster(file.path(path, files[grep('NC*', files)]))
 Sys.time()
 glcm.red <- glcm::glcm(naip_IR_r,
                  window = c(4, 4), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
-                 statistics = c("mean", "variance", 'homogeneity', 'contrast', 'dissimilarity'), 
+                 statistics = stats, 
                  min_x = 1, max_x = 255, na_opt = 'ignore', na_val = 0)
 Sys.time()
 
 Sys.time()
 glcm.colour <- glcm::glcm(naip_NC_r,
                  window = c(4, 4), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
-                 statistics = c("mean", "variance", 'homogeneity', 'contrast', 'dissimilarity'), 
+                 statistics = stats, 
                  min_x = 1, max_x = 255, na_opt = 'ignore', na_val = 0)
 Sys.time()
 
@@ -330,8 +329,60 @@ rglr_VegPts <- rglr_VegPts %>%
   st_drop_geometry()
 write.csv(rglr_VegPts, file = '../data/raw/UFO_Regular_Veg_pts.csv' , row.names = F)
 
-rm(rndm_VegPts, rndm_VegPts2)
+
+# we will also write out the 2022 plots to KML for manual classification. 
+aim2022 <- st_read(file.path(here(), '/data/raw/AIM_Points_2022/', 'AIM_Points_2022.shp'),
+        quiet = T) %>% 
+  mutate(ID = 1:n()) %>%
+  select(ID) %>%
+  st_transform(4326) %>%
+  as('Spatial')
+
+maptools::kmlPoints(aim2022, kmlfile = '../data/raw/UFO_2022_AIM.kml',
+          name = aim2022[['ID']], kmlname = 'UFO_2022_AIM')
+aim2022 <- aim2022 %>%
+  st_as_sf() %>%
+  mutate('VegClass' = "",
+    'Longitude' = st_coordinates(.)[,1],
+    'Latitude' = st_coordinates(.)[,2]) %>%
+  st_drop_geometry()
+write.csv(aim2022, file = '../data/raw/UFO_2022_AIM.csv' , row.names = F)
+
+rm(rndm_VegPts, rndm_VegPts2, aim2022)
 ```
+
+
+```{r number of points, echo = F}
+random <- file.path('../data/processed/',
+  list.files('../data/processed/',  pattern = '*Random*'))
+
+twenty22 <- read.csv('../data/processed/UFO_2022_AIM_CLASSIFIED.csv')
+historicVeg <- read.csv('../data/processed/UFO_Veg_monitoring_CLASSIFIED.csv') %>% 
+  na_if("")
+plot_drawn <- (nrow(twenty22) + nrow(historicVeg))
+plot_class <- bind_rows(twenty22, historicVeg) %>% drop_na()
+
+reg_drawn <- read.csv('../data/processed/UFO_Regular_Veg_pts-CLASSIFIED.csv') %>% 
+  na_if("")
+reg_pts <- reg_drawn %>% drop_na()
+
+random_drawn <- do.call(rbind, lapply(random, function(x) 
+  read.csv(x, stringsAsFactors = FALSE))) %>% 
+  na_if("") 
+random_pts <- random_drawn %>% drop_na() 
+
+rm(random, twenty22, historicVeg, random_drawn, plot_drawn, reg_drawn)
+
+```
+
+
+To create a more equally balanced training data set, all `r toString(plot_drawn)` AIM and LMF points were exported to Google Earth and `r toString(nrow(plot_class))` were classified. `r toString(nrow(random_drawn))` random points were generated across the focal BLM district and  `r toString(nrow(random_pts))` classified in Google Earth via the vegetation ecologist which lead the AIM sampling in 2022. An additional `r toString(nrow(reg_drawn))` regularly placed plots were drawn across the extent of the field office and `r toString(nrow(reg_pts))` were classified. Unclassified computer generated points were generally those that fell upon a wide road, or were outside BLM Ownership. Unclassified AIM/LMF points were LMF points which must have represented the revisitation of a single plot. 
+
+
+```{r echo = F}
+rm(plot_drawn, plot_class, random_drawn, reg_drawn)
+```
+
 
 Classified plots were randomly sampled to ensure an equal number of points per stratum, less Aspen and Mixed Conifer.
 
@@ -339,24 +390,18 @@ Classified plots were randomly sampled to ensure an equal number of points per s
 
 p <- file.path(here::here(), 'data/processed')
 
-reg_pts <- read.csv(file.path(p, 'UFO_Regular_Veg_pts-CLASSIFIED.csv')) %>% 
+reg_pts <-  reg_pts %>% 
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
   mutate(Type = 'Regular', .after = 'ID')
 
-computer_pts1 <- read.csv(file.path(p, 'UFO_Random_Veg_pts2-CLASSIFIED.csv')) %>% 
+random_pts <- random_pts %>% 
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
-  mutate(Type = 'Random2', .after = 'ID')
-  
-computer_pts <- read.csv(file.path(p, 'UFO_Random_Veg_pts-CLASSIFIED.csv')) %>%
-  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
-  mutate(Type = 'Random1', .after = 'ID') %>% 
-  
-  bind_rows(., computer_pts1, reg_pts) %>% 
+  mutate(Type = 'Random2', .after = 'ID') %>% 
   st_transform(26912) %>% 
   st_buffer(30) %>% 
   mutate(ID = as.character(ID)) %>% 
   mutate(across(where(is.character), ~na_if(., ""))) %>%
-  filter(VegClass %in% c('PJ', 'SD', 'SS'))
+  filter(VegClass %in% c('PJ', 'SD', 'SS', ))
 
 # AIM DATA post K-Means is read in here
 veg_pts <- st_read(file.path(p, '/reclassified_AIM/reclassified_AIM.shp'), quiet = T) %>% 
@@ -425,6 +470,7 @@ library(parallel)
 library(doParallel)
 library(randomForest)
 
+train_prop <- 0.7
 VegClass <- extract(predictors, veg_pts, method = 'bilinear',  fun = mean)
 VegClass <- cbind(as.data.frame(veg_pts), VegClass[,2:ncol(VegClass)])
 VegClass <- VegClass[complete.cases(VegClass),]
@@ -432,22 +478,31 @@ VegClass <- cbind(VegClass[,4:ncol(VegClass)], 'class' = VegClass[,3])
 VegClass$class <- as.factor(VegClass$class)
 
 split_obs <- createDataPartition(VegClass$class,
-                                 p = 0.7, # percentage of data as training
+                                 p = train_prop, # percentage of data as training
                                  list = FALSE)
 train <- VegClass[split_obs,]
 test <- VegClass[-split_obs,]
+
+rm(VegClass)
 ```
 
+The dataset of `r toString()` classified points were partioned into a `r toString(1-train_prop)` test and training set `r toString(train_prop)` using caret, SEE TABLE. 
 
 ```{r Fit Random Forest Model, warning = F, message = F}
 
-opt_mtry <- tuneRF(train,train$class, ntreeTry= 10000, doBest=TRUE,
-               stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE)
+nTT <- 1000
+sF <- 1.5
+I <- 0.01
+  
+opt_mtry <- tuneRF(train, train$class, ntreeTry = nTT,
+               stepFactor = sF, improve = I, trace = TRUE, plot = TRUE)
+no_mtry <- #
 
 cl <- makeCluster(detectCores()-2)
 registerDoParallel(cl)
 veg_rf_model <- randomForest(class~., data=train, proximity=TRUE, 
-                             ntree = 10000, mtry = 3)
+                             ntree = 1000, mtry = no_mtry) # we can only run so many trees
+# because it makes predicting onto the raster surface take !!MUCH!! longer
 stopCluster(cl); remove(cl)
 
 data.frame(print(importance(veg_rf_model, type = 2))) %>% 
@@ -458,34 +513,90 @@ data.frame(print(importance(veg_rf_model, type = 2))) %>%
 plot(veg_rf_model)
 # generate a confusion matrix to determine accuracy on real data.
 test_prediction <- predict(veg_rf_model, test)
-confusionMatrix(test_prediction, test$class)
+kable %>% confusionMatrix(test_prediction, test$class)
 
-# rm(cl, mtry, best.m)
+rm(cl, opt_mtry, test_prediction, train_prop)
 ```
 
 
-```{r Predict random forest onto raster and smooth it. }
+The number of mtry in the random forest model were tuned using the function tuneRF with the number of trys set to `r toString(nTT)`, a step factor of `r toString(sF)` and a relative minimum improvement in Out of Bag (OOB) error rate set at `r toString(I)`. The random forest model was than trained using `r toString(no_mtry)` mtry and `r toString(nTT)` trees, all using the RandomForest package. 
+
+```{r remove tree parameters, echo = F}
+rm(no_mtry, nTT, I, sF)
+```
+
+
+```{r Predict random forest onto raster and smooth it, eval = F}
+
 # predict model onto raster
 predict_rf <- terra::predict(object = predictors, model = veg_rf_model, cpkgs = 'randomForest',
-                     filename = file.path(here(), '/data/processed/PredictedVegClass.tif'),
-                     overwrite = T)
-predict_rf <- rast(file.path(here(), '/data/processed/PredictedVegClass.tif'))
+                     filename = file.path(p, '/PredictedVegClass.tif'),
+                     overwrite = T, cores = (detectCores()- 2) )
 
 # smooth the raster using focal statistics, we will find the mode in a rolling 
 # window and re-assign values based upon that. 
-predict_rf_smooth <- focal(predict_rf, w = 2, na.policy= 'omit')
+predict_rf_smooth <- focal(predict_rf, w = 5, fun = modal, na.policy= 'omit')
+plot(predict_rf_smooth, col = c('Red', '#2C664F', '#F8F5E6', '#B2AC88'))
 
-modal(x,ties='random', na.rm=FALSE, freq=FALSE)
-
-plot(predict_rf, col = c('Red', '#2C664F', '#F8F5E6', '#B2AC88'))
+predict_rf <- writeRaster(predict_rf_smooth, file.path(here(), '/data/processed/PredictedVegClass-sm.tif'))
 ```
+
+
+# Comparision of New and Old vegetation classification models. 
+
+```{r}
+library(waffle)
+library(tidyverse)
+
+p <- '/media/sagesteppe/ExternalHD/UFO_AIM_Design_Stratification'
+initialGAP <- read.csv(file.path(p, 'raw', 'lookupTable.txt'))
+
+reprocessedGAP <- read.csv(file.path(p, 'processed', 'UFO_strata_areas.csv')) %>% 
+  mutate(Percent = round((Cells/sum(Cells) ) *100)) %>% 
+  mutate(Code = case_when(
+    Stratum  ==  'Aspen' ~ 'AS', 
+    Stratum  ==  'Grassland' ~ 'GR', 
+    Stratum  ==  'Mixed Conifer' ~  'MC', 
+    Stratum  ==  'Mixed Mountain Shrub' ~ 'MMS', 
+    Stratum  ==  'Other' ~ 'OT', 
+    Stratum  ==  'Pinion Juniper Woodland' ~ 'PJ', 
+    Stratum  ==  'Ponderosa Pine' ~ 'PP',
+    Stratum  == 'Riparian' ~ 'RI',
+    Stratum  == 'Sagebrush' ~ 'SS',
+    Stratum  == 'Salt Desert' ~ 'SD'
+    )) %>% 
+  arrange(-Percent)
+
+strata_pal <- strata_pal[order(match(names(strata_pal),reprocessedGAP$Code))]
+
+ggplot(reprocessedGAP, aes(fill = Code, values = Percent)) +
+  geom_waffle(color = 'white') +
+  scale_fill_manual(name = 'Statum',
+                    values = strata_pal, 
+                    labels = names(strata_pal)) +
+  coord_equal() +
+  theme_void() +
+  labs(title = 'Percent land cover in the initial design')
+
+# now maybe do a waffle of what percent habitat plots were located actually IN ??
+
+# and then a waffle of what percent habitats exist in UFO based on reclassification
+# strategy? 
+
+# and then iron them altogher, have them take up a half page, and wrap the text on the other half. 
+```
+
+
+The initial AIM sample design was based upon a stratification which included `r` communities. This design was based on a manual reclassification of the GAP/LANDFIRE National Terrestrial Ecosystems 2011 data set. 
+
 
 
 # Citations
 
 ```{r}
-c("terra", "glcm", "RStoolbox", "caret") %>%
+c("terra", "glcm", "RStoolbox", "randomForest", "caret", "parallel", "doParallel") %>%
   map(citation) %>%
   print(style = "text")
+
 ```
 

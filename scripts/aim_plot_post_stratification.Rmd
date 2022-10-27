@@ -213,9 +213,28 @@ plots <- st_read(p, 'Plots', quiet = T) %>%
   left_join(., classified, by = 'PlotKey') %>% 
   st_transform(4269)
 
+
 fp <- file.path(here(), 'data/processed/reclassified_AIM')
 ifelse(!dir.exists(fp), dir.create(fp), FALSE)
 st_write(plots, file.path(fp, 'reclassified_AIM.shp'))
+
+# write out a copy to google earth to reclassify ...
+plots <- plots %>% 
+  mutate(ID = 1:n()) %>%
+  select(ID) %>%
+  st_centroid() %>% 
+  st_transform(4326) %>%
+  as('Spatial')
+  
+maptools::kmlPoints(plots, kmlfile = '../data/raw/UFO_Veg_monitoring.kml',
+          name = plots[['ID']], kmlname = 'Regular_Veg_pts')
+plots <- plots %>%
+  st_as_sf() %>%
+  mutate('VegClass' = "",
+    'Longitude' = st_coordinates(.)[,1],
+    'Latitude' = st_coordinates(.)[,2]) %>%
+  st_drop_geometry()
+write.csv(plots, file = '../data/raw/UFO_Veg_monitoring.csv' , row.names = F)
 
 rm(p, UFO_land, LMF_plots, classified, fp, plots)
 ```
@@ -224,7 +243,7 @@ rm(p, UFO_land, LMF_plots, classified, fp, plots)
 
 
 
-the function below was not neccessary it seemed unable to grab the values which appear misclassified in the plots. 
+the function below was not necessary it seemed unable to grab the values which appear misclassified in the plots. 
 ```{r}
 k_means_euclidean_classifer <- function(clusters){
   #' this function serves to classify an indepedent dataset based on a k-means classification
