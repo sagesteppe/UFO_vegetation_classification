@@ -662,7 +662,7 @@ write.csv(area, file.path(p1, 'Count_OriginalStrat_raster_values.csv'), row.name
 rm(d, original_strat, reclassified)
 ```
 
-```{r reimport data for showing flow from veg classes, echo = F}
+```{r reimport data for showing flow from veg classes, echo = F, fig.cap="This diagram shows how raster cells in the UFO are redistributed from the original sample design, to the the reclassified spatial product for the sample design"}
 
 library(circlize)
 
@@ -670,36 +670,30 @@ p1 <- '/media/sagesteppe/ExternalHD/plot_post_stratification/data/processed'
 rvals <- read.csv(file.path(p1, 'Extracted_raster_values.csv'))
 area <- read.csv(file.path(p1, 'Count_OriginalStrat_raster_values.csv'))
 
-ab <- left_join(rvals, ltable, by = c('Reclassified' = 'num')) %>% 
-  left_join(., reprocessedGAP %>% 
-              select(RasterValue, Code),
-            by = c('Original' = 'RasterValue')) %>% 
-  left_join(., area %>% select(num, Cells),
-            by = c('Original' = 'num')) %>% 
-  rowwise() %>% 
-  mutate(value = round( n/Cells, 5)) %>% 
-  select(IDSource = Original, 
-         Source = Code, Target = Stratum, value)
-
-rvals <- pivot_wider(rvals, names_from = 'Reclassified', values_from = 'n') %>% 
+rvals <- rvals %>% 
+  mutate(n = round( n/100000, 1)) %>% 
+  pivot_wider(names_from = 'Reclassified', values_from = 'n') %>% 
   column_to_rownames('Original') %>% # for circle chart. 
   as.matrix()
-colnames(rvals) <- paste0('to', ltable$Stratum)
+
+colnames(rvals) <- paste0('to ', ltable$Stratum)
 rownames(rvals) <- reprocessedGAP %>% 
   arrange(RasterValue) %>% 
   pull(Code)
 
 sp2 <- strata_pal # create a palette to mark the colors in both ends
-names(sp2) <- paste0('to', names(strata_pal))
+names(sp2) <- paste0('to ', names(strata_pal))
 all_pals<- c(strata_pal, sp2)
 
-
-chordDiagram(rvals, transparency = 0.5, directional = 1, grid.col = all_pals)
+chordDiagram(rvals, transparency = 0.5, directional = 1, 
+             grid.col = all_pals, diffHeight  = -0.04)
 
 ```
 
 
 The initial AIM sample design was based upon a stratification which included `r` communities. This design was based on a manual reclassification of the GAP/LANDFIRE National Terrestrial Ecosystems 2011 data set. 
+
+Note that the secondary classification inherited nearly all of the cells values from the Pinon-Juniper and Salt-desert from the initial classification. 
 
 
 
