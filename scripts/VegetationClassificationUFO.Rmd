@@ -157,7 +157,7 @@ rm(naip_imagery_collection_IR, naip_imagery_collection_NC, naip_imagery_IR, naip
 ```
 
 
-```{r Import processed NAIP imagery and resample to other products, echo = F}
+```{r Import processed NAIP imagery and resample to other products, echo = F, eval = F}
 path <- '/media/sagesteppe/ExternalHD/NAIP/processed'
 files <- list.files(path)
 
@@ -547,6 +547,9 @@ predict_rf <- writeRaster(predict_rf_smooth, file.path(here(), '/data/processed/
 ```{r}
 library(waffle)
 library(tidyverse)
+library(terra)
+
+# original land cover of sample design
 
 p <- '/media/sagesteppe/ExternalHD/UFO_AIM_Design_Stratification'
 initialGAP <- read.csv(file.path(p, 'raw', 'lookupTable.txt'))
@@ -569,21 +572,130 @@ reprocessedGAP <- read.csv(file.path(p, 'processed', 'UFO_strata_areas.csv')) %>
 
 strata_pal <- strata_pal[order(match(names(strata_pal),reprocessedGAP$Code))]
 
-ggplot(reprocessedGAP, aes(fill = Code, values = Percent)) +
-  geom_waffle(color = 'white') +
+strata_waffle <- ggplot(reprocessedGAP, aes(fill = Code, values = Percent)) + 
+  geom_waffle(color = 'white') + 
   scale_fill_manual(name = 'Statum',
                     values = strata_pal, 
-                    labels = names(strata_pal)) +
-  coord_equal() +
-  theme_void() +
-  labs(title = 'Percent land cover in the initial design')
+                    labels = names(strata_pal)) + 
+  coord_equal() + 
+  theme_void() + 
+  labs(title = 'land cover in the initial design')  +
+  theme(plot.title = element_text(hjust = 0.5), 
+       legend.key.size = unit(0.2, "cm"))
 
-# now maybe do a waffle of what percent habitat plots were located actually IN ??
+rm(reprocessedGAP)
 
-# and then a waffle of what percent habitats exist in UFO based on reclassification
-# strategy? 
+# now a waffle of what percent habitat plots were located actually IN ??
 
-# and then iron them altogher, have them take up a half page, and wrap the text on the other half. 
+
+
+#  a waffle of what percent habitats exist in UFO based on reclassification
+
+reclassified <- rast(file.path('/media/sagesteppe/ExternalHD/plot_post_stratification', 'data/processed/PredictedVegClass-sm.tif'))
+
+area <- values(reclassified)
+area <- area[!is.na(area)] # 4 SS, # 3 SD, 2 PJ, 1 MMS
+area <- aggregate(area, list(num=area), length)
+ltable <- data.frame(
+  num = c(1,2,3,4), 
+  Stratum = c('MMS', 'PJ', 'SD', 'SS')
+) 
+vegclass <- area %>% 
+  inner_join(., ltable, 
+            by = 'num') %>% 
+  select(Cells = x, RasterValue = num, Stratum) %>% 
+  mutate(Percent = round((Cells/sum(Cells) ) *100)) %>% 
+  arrange(-Percent)
+
+strata_pal <- strata_pal[order(match(names(strata_pal),vegclass$Code))]
+strata_pal2 <- strata_pal[1:nrow(vegclass)]
+
+reclass_waffle <- ggplot(vegclass, aes(fill = Stratum, values = Percent)) + 
+  geom_waffle(color = 'white') + 
+  scale_fill_manual(name = 'Statum',
+                    values = strata_pal2, 
+                    labels = names(strata_pal2)) + 
+  coord_equal() + 
+  theme_void() + 
+  labs(title = 'land cover based on modeling')  +
+  theme(plot.title = element_text(hjust = 0.5), 
+       legend.key.size = unit(0.2, "cm"))
+
+plot_grid(strata_waffle, reclass_waffle, ncol = 1)
+
+# show the flow from stratified land cover to reclassified land cover
+```
+
+```{r compare values between rasters to create flow chart, eval = F}
+# first match the resolutions of these products, we will resample the coarser original
+# to the finer remapped classification. 
+original_strat <- rast(file.path(p, 'processed', 'UFO_Strata.tif'))
+original_strat <- project(original_strat, crs(reclassified), method = 'near')
+orig_strat_resamp <- resample(original_strat, reclassified, method = 'near')
+orig_strat_resamp <- mask(orig_strat_resamp, reclassified)
+rm(original_strat)
+
+area <- values(orig_strat_resamp)
+area <- area[!is.na(area)] 
+area <- aggregate(area, list(num=area), length)
+
+area <- area %>% 
+  inner_join(., reprocessedGAP %>% select(RasterValue, Code), 
+            by = c('num' = 'RasterValue')) %>% 
+  rename(Cells = x)
+
+# do !!!NOT!!! try this on gov't computer, reach out to reed (sagesteppe) and he can run it!!!!!
+
+r <- rast(list(orig_strat_resamp, reclassified))
+rvals <- as.matrix(r, na.rm = T)
+rvals <- rvals[complete.cases(rvals),]
+rvals <- data.frame(rvals) %>% 
+  group_by(lyr1) %>% 
+  count(BPS_CODE) %>% 
+  rename(Reclassified = lyr1,
+        Original= BPS_CODE)
+
+p1 <- '/media/sagesteppe/ExternalHD/plot_post_stratification/data/processed'
+write.csv(rvals, file.path(p1, 'Extracted_raster_values.csv'), row.names = F)
+write.csv(area, file.path(p1, 'Count_OriginalStrat_raster_values.csv'), row.names = F)
+
+rm(d, original_strat, reclassified)
+```
+
+```{r reimport data for showing flow from veg classes, echo = F}
+
+library(circlize)
+
+p1 <- '/media/sagesteppe/ExternalHD/plot_post_stratification/data/processed'
+rvals <- read.csv(file.path(p1, 'Extracted_raster_values.csv'))
+area <- read.csv(file.path(p1, 'Count_OriginalStrat_raster_values.csv'))
+
+ab <- left_join(rvals, ltable, by = c('Reclassified' = 'num')) %>% 
+  left_join(., reprocessedGAP %>% 
+              select(RasterValue, Code),
+            by = c('Original' = 'RasterValue')) %>% 
+  left_join(., area %>% select(num, Cells),
+            by = c('Original' = 'num')) %>% 
+  rowwise() %>% 
+  mutate(value = round( n/Cells, 5)) %>% 
+  select(IDSource = Original, 
+         Source = Code, Target = Stratum, value)
+
+rvals <- pivot_wider(rvals, names_from = 'Reclassified', values_from = 'n') %>% 
+  column_to_rownames('Original') %>% # for circle chart. 
+  as.matrix()
+colnames(rvals) <- paste0('to', ltable$Stratum)
+rownames(rvals) <- reprocessedGAP %>% 
+  arrange(RasterValue) %>% 
+  pull(Code)
+
+sp2 <- strata_pal # create a palette to mark the colors in both ends
+names(sp2) <- paste0('to', names(strata_pal))
+all_pals<- c(strata_pal, sp2)
+
+
+chordDiagram(rvals, transparency = 0.5, directional = 1, grid.col = all_pals)
+
 ```
 
 
