@@ -115,6 +115,7 @@ naip_imagery_IR <- lapply(dl_naip_IR, rast)
 naip_imagery_NC <- lapply(dl_naip_NC, rast)
 
 target_counties <- target_counties[match(dl_naip_tiles, target_counties$COUNTYFP),]
+dl_naip_NC
 
 names(naip_imagery_IR) <- target_counties$NAME
 names(naip_imagery_NC) <- target_counties$NAME
@@ -127,33 +128,33 @@ UFO_extent_12 <- vect(st_transform(UFO_land, 26912))
 UFO_extent_13 <- vect(st_transform(UFO_land, 26913))
 
 for (i in c(1:2,5:6)){
-  naip_imagery_IR[[i]] <- crop(naip_imagery_IR[[i]],  UFO_extent_13, mask = T) # reduce extent of files
+  naip_imagery_NC[[i]] <- crop(naip_imagery_NC[[i]],  UFO_extent_13, mask = T) # reduce extent of files
 }
 for (i in c(3,4,7)){
-  naip_imagery_IR[[i]] <- crop(naip_imagery_IR[[i]],  UFO_extent_12, mask = T)
+  naip_imagery_NC[[i]] <- crop(naip_imagery_NC[[i]],  UFO_extent_12, mask = T)
 }
 for (i in c(1,5,2)){
-  naip_imagery_IR[[i]] <- project(naip_imagery_IR[[i]],  y = naip_imagery_IR[[4]],
-                              method = 'bilinear', align = T, threads = 20)
+  naip_imagery_NC[[i]] <- project(naip_imagery_NC[[i]],  y = naip_imagery_NC[[4]],
+                              method = 'cubicspline', align = T, threads = 20)
 }
-naip_imagery_IR[[6]] <- project(naip_imagery_IR[[6]],  y = naip_imagery_IR[[5]],
-                              method = 'bilinear', align = T, threads = 20)
+naip_imagery_NC[[6]] <- project(naip_imagery_NC[[6]],  y = naip_imagery_NC[[5]],
+                              method = 'cubicspline', align = T, threads = 20)
 
-naip_imagery_collection_IR <- sprc(naip_imagery_IR) # make a wide raster of all tiles
-UFO_NAIP_IR <- mosaic(naip_imagery_collection_IR) # create a single large product of rasters
+naip_imagery_collection_NC <- sprc(naip_imagery_NC) # make a wide raster of all tiles
+UFO_NAIP_NC <- mosaic(naip_imagery_collection_NC) # create a single large product of rasters
 
-plot(UFO_NAIP_IR)
+plot(UFO_NAIP_NC)
 
 path <- '/media/sagesteppe/ExternalHD/NAIP/'
 # dir.create(file.path(path, 'processed'))
-fname <- file.path(path, 'processed', 'IR_naip.tif')
+fname <- file.path(path, 'processed', 'NC_naip.tif')
 #tile_borders <- rast(ncols = 2, nrows = 2, crs = crs(UFO_NAIP_NC), 
 #                     xmin = xmin(UFO_NAIP_NC), xmax = xmax(UFO_NAIP_NC), 
 #                     ymax = ymax(UFO_NAIP_NC), ymin = ymin(UFO_NAIP_NC))
 #makeTiles(UFO_NAIP_NC, tile_borders, fname)
-writeRaster(UFO_NAIP_IR, fname)
+writeRaster(UFO_NAIP_NC, fname)
 
-rm(naip_imagery_collection_IR, naip_imagery_collection_NC, naip_imagery_IR, naip_imagery_NC)
+rm(naip_imagery_collection_IR, naip_imagery_collection_NC, naip_imagery_IR, naip_imagery_NC, i)
 ```
 
 
@@ -169,13 +170,13 @@ naip_NC <- rast(file.path(path, naip_NC))
 
 # now we will resample this product so that it aligns with the existing physiographic products we have. 
 
-dem <- rast(file.path( 'data/processed/'),
-            list.files(file.path('/data/processed')),
-            pattern = "dem.*smooth*\\.tif")
+dem <- rast(file.path( '../data/processed/',
+            list.files(file.path('../data/processed'),
+            pattern = "dem.*smooth.*tif$")))
 
-naip_IR <- resample(naip_IR, dem, method = 'bilinear', threads = T, 
+naip_IR <- resample(naip_IR, dem, method = 'cubicspline', threads = 20, 
                     filename = file.path(path, 'IR_naip_resamp.tif'))
-naip_NC <- resample(naip_NC, dem, method = 'bilinear', threads = T, 
+naip_NC <- resample(naip_NC, dem, method = 'cubicspline', threads = 20, 
                     filename = file.path(path, 'NC_naip_resamp.tif'))
 ```
 
@@ -401,17 +402,29 @@ random_pts <- random_pts %>%
   st_buffer(30) %>% 
   mutate(ID = as.character(ID)) %>% 
   mutate(across(where(is.character), ~na_if(., ""))) %>%
-  filter(VegClass %in% c('PJ', 'SD', 'SS', ))
+  filter(VegClass %in% c('PJ', 'SD', 'SS', 'MMS'))
+
+
+veg_pts <- plot_class %>% 
+  st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
+  mutate(Type = 'Random2', .after = 'ID') %>% 
+  st_transform(26912) %>% 
+  st_buffer(30) %>% 
+  mutate(ID = as.character(ID))
 
 # AIM DATA post K-Means is read in here
-veg_pts <- st_read(file.path(p, '/reclassified_AIM/reclassified_AIM.shp'), quiet = T) %>% 
-  st_transform(26912) %>%  # these alreday buffered by type. 
-  rename(ID = PlotKey, Type = Plot, VegClass = Veg_type) %>% 
-  bind_rows(., computer_pts) %>% 
-  drop_na() %>% 
-  vect()
+#veg_pts <- st_read(file.path(p, '/reclassified_AIM/reclassified_AIM.shp'), quiet = T) %>% 
+#  st_transform(26912) %>%  # these alreday buffered by type. 
+#  rename(ID = PlotKey, Type = Plot, VegClass = Veg_type) %>% 
+#  bind_rows(., computer_pts) %>% 
+#  drop_na() %>% 
+#  vect()
 
-rm(reg_pts, computer_pts, computer_pts1)
+
+# alt route use the manually classified
+
+
+rm(reg_pts)
 ```
 
 https://valentinitnelav.github.io/satellite-image-classification-r/
@@ -431,11 +444,11 @@ UFO_land <- st_read(
 
 path <- '/media/sagesteppe/ExternalHD/NAIP/processed'
 files <- list.files(path)
-
+files
 naip_NC <- rast(file.path(
-  path, files[grep('NC_naip_resample.tif', files)]))
+  path, files[grep('NC_naip_resamp.tif', files)]))
 naip_IR <- rast(file.path(
-  path, files[grep('IR_naip_resample.tif', files)]))[[1]]
+  path, files[grep('IR_naip_resamp.tif', files)]))[[1]]
 NDVI <- rast(file.path(
   path, files[grep('NDVI.tif', files)]))
 
@@ -547,7 +560,7 @@ predict_rf <- writeRaster(predict_rf_smooth, file.path(here(), '/data/processed/
 ```{r}
 library(waffle)
 library(tidyverse)
-library(terra)
+
 
 # original land cover of sample design
 
@@ -591,7 +604,7 @@ rm(reprocessedGAP)
 
 #  a waffle of what percent habitats exist in UFO based on reclassification
 
-reclassified <- rast(file.path('/media/sagesteppe/ExternalHD/plot_post_stratification', 'data/processed/PredictedVegClass-sm.tif'))
+reclassified <- rast(file.path(here(), 'data/processed/PredictedVegClass-sm.tif'))
 
 area <- values(reclassified)
 area <- area[!is.na(area)] # 4 SS, # 3 SD, 2 PJ, 1 MMS
@@ -623,77 +636,32 @@ reclass_waffle <- ggplot(vegclass, aes(fill = Stratum, values = Percent)) +
 
 plot_grid(strata_waffle, reclass_waffle, ncol = 1)
 
-# show the flow from stratified land cover to reclassified land cover
-```
 
-```{r compare values between rasters to create flow chart, eval = F}
+# show the flow from stratified land cover to reclassified land cover
+
 # first match the resolutions of these products, we will resample the coarser original
 # to the finer remapped classification. 
 original_strat <- rast(file.path(p, 'processed', 'UFO_Strata.tif'))
-original_strat <- project(original_strat, crs(reclassified), method = 'near')
+original_strat <- project(original_strat, crs(reclassified))
 orig_strat_resamp <- resample(original_strat, reclassified, method = 'near')
 orig_strat_resamp <- mask(orig_strat_resamp, reclassified)
+
 rm(original_strat)
 
-area <- values(orig_strat_resamp)
-area <- area[!is.na(area)] 
-area <- aggregate(area, list(num=area), length)
+vorig <- as.matrix(orig_strat_resamp, wide = T, na.rm = T)
+vclassified <- as.matrix(reclassified, wide = T, na.rm = T)
+rm(vorig, vclassified)
 
-area <- area %>% 
-  inner_join(., reprocessedGAP %>% select(RasterValue, Code), 
-            by = c('num' = 'RasterValue')) %>% 
-  rename(Cells = x)
+opoly <- as.polygons(orig_strat_resamp)
+opoly <- sf::st_as_sf(opoly)
 
-# do !!!NOT!!! try this on gov't computer, reach out to reed (sagesteppe) and he can run it!!!!!
-
-r <- rast(list(orig_strat_resamp, reclassified))
-rvals <- as.matrix(r, na.rm = T)
-rvals <- rvals[complete.cases(rvals),]
-rvals <- data.frame(rvals) %>% 
-  group_by(lyr1) %>% 
-  count(BPS_CODE) %>% 
-  rename(Reclassified = lyr1,
-        Original= BPS_CODE)
-
-p1 <- '/media/sagesteppe/ExternalHD/plot_post_stratification/data/processed'
-write.csv(rvals, file.path(p1, 'Extracted_raster_values.csv'), row.names = F)
-write.csv(area, file.path(p1, 'Count_OriginalStrat_raster_values.csv'), row.names = F)
-
-rm(d, original_strat, reclassified)
-```
-
-```{r reimport data for showing flow from veg classes, echo = F, fig.cap="This diagram shows how raster cells in the UFO are redistributed from the original sample design, to the the reclassified spatial product for the sample design"}
-
-library(circlize)
-
-p1 <- '/media/sagesteppe/ExternalHD/plot_post_stratification/data/processed'
-rvals <- read.csv(file.path(p1, 'Extracted_raster_values.csv'))
-area <- read.csv(file.path(p1, 'Count_OriginalStrat_raster_values.csv'))
-
-rvals <- rvals %>% 
-  mutate(n = round( n/100000, 1)) %>% 
-  pivot_wider(names_from = 'Reclassified', values_from = 'n') %>% 
-  column_to_rownames('Original') %>% # for circle chart. 
-  as.matrix()
-
-colnames(rvals) <- paste0('to ', ltable$Stratum)
-rownames(rvals) <- reprocessedGAP %>% 
-  arrange(RasterValue) %>% 
-  pull(Code)
-
-sp2 <- strata_pal # create a palette to mark the colors in both ends
-names(sp2) <- paste0('to ', names(strata_pal))
-all_pals<- c(strata_pal, sp2)
-
-chordDiagram(rvals, transparency = 0.5, directional = 1, 
-             grid.col = all_pals, diffHeight  = -0.04)
+ggplot(opoly) + 
+  geom_sf()
 
 ```
 
 
 The initial AIM sample design was based upon a stratification which included `r` communities. This design was based on a manual reclassification of the GAP/LANDFIRE National Terrestrial Ecosystems 2011 data set. 
-
-Note that the secondary classification inherited nearly all of the cells values from the Pinon-Juniper and Salt-desert from the initial classification. 
 
 
 
