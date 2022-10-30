@@ -186,35 +186,37 @@ A Gray Level Co-occurrence Matrix (GLCM) was created using the glcm package to c
 
 library(factoextra)
 library(FactoMineR)
+library(glcm)
 # https://zia207.github.io/geospatial-r-github.io/texture-analysis.html
 
 # we will perform different runs on the natural color and IR bands to develop the GLCM
 
 path <- '/media/reed/ExternalHD/NAIP/processed'
-files <- list.files(path, pattern = 'resample')
-stats <- c("mean", "variance", 'homogeneity', 'contrast', 'dissimilarity'))
+files <- list.files(path, pattern = 'resamp')
+stats <- c("mean", "variance", 'homogeneity', 'contrast', 'dissimilarity')
 
 naip_IR_r <- raster::raster(file.path(path, files[grep('IR*', files)]))
 naip_NC_r <- raster::raster(file.path(path, files[grep('NC*', files)]))
 
 Sys.time()
 glcm.red <- glcm::glcm(naip_IR_r,
-                 window = c(4, 4), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
+                 window = c(5, 5), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
                  statistics = stats, 
                  min_x = 1, max_x = 255, na_opt = 'ignore', na_val = 0)
 Sys.time()
 
 Sys.time()
 glcm.colour <- glcm::glcm(naip_NC_r,
-                 window = c(4, 4), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
+                 window = c(5, 5), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
                  statistics = stats, 
                  min_x = 1, max_x = 255, na_opt = 'ignore', na_val = 0)
 Sys.time()
 
+writeRaster(glcm.colour, file.path(path, 'glcm_red_textures.tif'))
 writeRaster(glcm.colour, file.path(path, 'glcm_colour_textures.tif'))
 
-glcm.colour <- rast(glcm.colour)
 glcm.red <- rast(file.path(path, 'glcm_red_textures.tif'))
+glcm.colour <- rast(file.path(path, 'glcm_colour_textures.tif'))
 
 rm(naip_IR_r, naip_NC_r)
 
@@ -223,10 +225,15 @@ all_textures <- c(glcm.red, glcm.colour)
 all_textures <- scale(all_textures, center = T) # scale the data before the function
 all_textures[is.na(all_textures)] <- 0 # define zero for all missing values
 
-texture_values <- values(spatSample(all_textures, 
-                                    ((dim(all_textures)[1] * dim(all_textures)[2]) * 0.05), 
+Sys.time()
+texture_values <- values(spatSample(all_textures, # this can take up to an hour or so
+                                    ((dim(all_textures)[1] * dim(all_textures)[2]) * 0.01), 
                         as.raster=TRUE))
+Sys.time()
 rf_veg_pca <- prcomp(texture_values)
+
+saveRDS(rf_veg_pca, "../results/stats/veg_pca.rds")
+rf_veg_pca <- readRDS("../results/stats/veg_pca.rds")
 texture_PC <- predict(all_textures, rf_veg_pca)
 
 fviz_pca_var(rf_veg_pca,
@@ -239,17 +246,17 @@ summary(rf_veg_pca)
 rf_veg_pca[["rotation"]]
 
 # now select and write out bands with considerable influence to variation
-texture_PrincComponents <- c(texture_PC[[c(1:2)]])  ### this is cumulative 0.92 prop.
+texture_PrincComponents <- subset(texture_PrincComponents, c(1:2))
 names(texture_PrincComponents) <- paste0('principal_Component', 
                                          rep(1:dim(texture_PrincComponents)[3]))
 
-texture_PrincComponents[texture_PrincComponents < 0 ] <- NA
-writeRaster(texture_PrincComponents, file.path(path, 'Textures_pca.tif'))
+plot(texture_PrincComponents)
+texture_PrincComponents <- mask(texture_PrincComponents, glcm.red)
+plot(texture_PrincComponents)
 
-naip <- rast(file.path(path, files[grep('IR*', files)]))
-dim(naip)
+writeRaster(texture_PrincComponents, file.path(path, 'Textures_pca.tif'), overwrite = T)
 
-rm(texture_PrincComponents, all_textures, glcm.red, glcm.colour, texture_values, rf_veg_pca, texture_PC, files)
+rm(texture_PrincComponents, all_textures, glcm.red, glcm.colour, texture_values, rf_veg_pca, texture_PC, files, sr)
 ```
 
 NAIP data were processed to create an NDVI band. NDVI is well suited for identifying sparsely vegetated areas, it may be useful in distinguishing salt desert from all other strata, and help in distinguishing between MMS and PJ. 
@@ -257,10 +264,14 @@ NAIP data were processed to create an NDVI band. NDVI is well suited for identif
 ```{r create NDVI band, echo = F}
 # (NIR - Red) / (NIR + Red)
 
+naip_NC <- rast(naip_NC_r)
+naip_IR <- rast(naip_IR_r)
+rm(naip_IR_r, naip_NC_r)
+
 naip_ndvi <- (naip_IR[[1]] - naip_NC[[1]]) / (naip_IR[[1]] + naip_NC[[1]])
 plot(naip_ndvi) # see the green up at the boundaries with forest service.
 
-writeRaster(naip_ndvi, file.path(path, 'NDVI.tif'))
+writeRaster(naip_ndvi, file.path(path, 'NDVI.tif'), overwrite = T)
 ```
 
 To create a more equally balanced training data set, all classified AIM points were exported to Google Earth. 150 random points were generated across the focal BLM district and classified in Google Earth via the vegetation ecologist which lead the AIM sampling in 2022. Additional records for each stratum, less Aspen forest, without enough points for balanced sampling were found by the vegetation ecologist and marked via Google Earth. 
@@ -321,6 +332,18 @@ rglr_VegPts <- rndm_VegPts %>%
 maptools::kmlPoints(rglr_VegPts, kmlfile = '../data/raw/UFO_Regular_Veg_pts.kml',
           name = rglr_VegPts[['ID']], kmlname = 'Regular_Veg_pts')
 
+# get some more. 
+rglr_VegPts <- rndm_VegPts %>%
+  spatSample(size = 750, method="regular") %>%
+  st_as_sf() %>%
+  mutate(ID = 1:n()) %>%
+  select(ID) %>%
+  st_transform(4326) %>%
+  as('Spatial')
+
+maptools::kmlPoints(rglr_VegPts, kmlfile = '../data/raw/UFO_Regular_Veg_pts2.kml',
+          name = rglr_VegPts[['ID']], kmlname = 'Regular_Veg_pts2')
+
 # we will also write a CSV for noting the results quickly.
 rglr_VegPts <- rglr_VegPts %>%
   st_as_sf() %>%
@@ -328,7 +351,7 @@ rglr_VegPts <- rglr_VegPts %>%
     'Longitude' = st_coordinates(.)[,1],
     'Latitude' = st_coordinates(.)[,2]) %>%
   st_drop_geometry()
-write.csv(rglr_VegPts, file = '../data/raw/UFO_Regular_Veg_pts.csv' , row.names = F)
+write.csv(rglr_VegPts, file = '../data/raw/UFO_Regular_Veg_pts2.csv' , row.names = F)
 
 
 # we will also write out the 2022 plots to KML for manual classification. 
@@ -356,6 +379,8 @@ rm(rndm_VegPts, rndm_VegPts2, aim2022)
 ```{r number of points, echo = F}
 random <- file.path('../data/processed/',
   list.files('../data/processed/',  pattern = '*Random*'))
+reg <- file.path('../data/processed/',
+  list.files('../data/processed/',  pattern = '*Regular*'))
 
 twenty22 <- read.csv('../data/processed/UFO_2022_AIM_CLASSIFIED.csv')
 historicVeg <- read.csv('../data/processed/UFO_Veg_monitoring_CLASSIFIED.csv') %>% 
@@ -363,9 +388,11 @@ historicVeg <- read.csv('../data/processed/UFO_Veg_monitoring_CLASSIFIED.csv') %
 plot_drawn <- (nrow(twenty22) + nrow(historicVeg))
 plot_class <- bind_rows(twenty22, historicVeg) %>% drop_na()
 
-reg_drawn <- read.csv('../data/processed/UFO_Regular_Veg_pts-CLASSIFIED.csv') %>% 
-  na_if("")
-reg_pts <- reg_drawn %>% drop_na()
+reg_drawn <- do.call(rbind, lapply(reg, function(x) 
+  read.csv(x, stringsAsFactors = FALSE)))
+reg_pts <- reg_drawn %>% 
+  drop_na() %>% 
+  filter(VegClass %in% c('AS', 'MC', 'PJ', 'SD', 'SS', 'MMS'))
 
 random_drawn <- do.call(rbind, lapply(random, function(x) 
   read.csv(x, stringsAsFactors = FALSE))) %>% 
@@ -393,7 +420,10 @@ p <- file.path(here::here(), 'data/processed')
 
 reg_pts <-  reg_pts %>% 
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
-  mutate(Type = 'Regular', .after = 'ID')
+  mutate(Type = 'Regular', .after = 'ID') %>% 
+  mutate(ID = as.character(ID)) %>% 
+  st_transform(26912) %>% 
+  st_buffer(30) 
 
 random_pts <- random_pts %>% 
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
@@ -403,7 +433,6 @@ random_pts <- random_pts %>%
   mutate(ID = as.character(ID)) %>% 
   mutate(across(where(is.character), ~na_if(., ""))) %>%
   filter(VegClass %in% c('PJ', 'SD', 'SS', 'MMS'))
-
 
 veg_pts <- plot_class %>% 
   st_as_sf(coords = c("Longitude", "Latitude"), crs = 4326) %>% 
@@ -420,11 +449,12 @@ veg_pts <- plot_class %>%
 #  drop_na() %>% 
 #  vect()
 
-
 # alt route use the manually classified
+veg_pts <- bind_rows(veg_pts, random_pts, reg_pts) %>% 
+  as(., "Spatial") %>% 
+  vect()
 
-
-rm(reg_pts)
+rm(reg_pts, random_pts)
 ```
 
 https://valentinitnelav.github.io/satellite-image-classification-r/
@@ -442,7 +472,7 @@ UFO_land <- st_read(
   st_transform(26912) %>% 
   vect()
 
-path <- '/media/sagesteppe/ExternalHD/NAIP/processed'
+path <- '/media/reed/ExternalHD/NAIP/processed'
 files <- list.files(path)
 files
 naip_NC <- rast(file.path(
@@ -456,10 +486,11 @@ texture <- rast(file.path(
   path, files[grep('Textures_pca.tif', files)]))
 # texture <- resample(texture, naip_NC, method = 'cubicspline')
 
-PhysioPath <- '/media/sagesteppe/ExternalHD/AIM_Field_rasters'
+PhysioPath <- '/media/reed/ExternalHD/AIM_Field_rasters'
+
 DEM <- rast(file.path(PhysioPath,
             list.files(PhysioPath,
-            pattern = "dem.*smooth_UTM*\\.tif")))
+            pattern = "dem.*smooth.*tif$")))
 DEM <- crop(DEM,  UFO_land, mask = T)
 DEM <- resample(DEM, naip_NC, method = 'cubicspline')
 
@@ -484,15 +515,23 @@ library(doParallel)
 library(randomForest)
 
 train_prop <- 0.7
-VegClass <- extract(predictors, veg_pts, method = 'bilinear',  fun = mean)
+
+VegClass <- extract(predictors, veg_pts, method = 'simple',  fun = mean, weights = T)
 VegClass <- cbind(as.data.frame(veg_pts), VegClass[,2:ncol(VegClass)])
 VegClass <- VegClass[complete.cases(VegClass),]
 VegClass <- cbind(VegClass[,4:ncol(VegClass)], 'class' = VegClass[,3])
 VegClass$class <- as.factor(VegClass$class)
 
+#VegClass <- VegClass %>% 
+#  group_by(class) %>% 
+#  sample_n(400, replace = T) %>% 
+#  distinct()
+
 split_obs <- createDataPartition(VegClass$class,
                                  p = train_prop, # percentage of data as training
                                  list = FALSE)
+
+
 train <- VegClass[split_obs,]
 test <- VegClass[-split_obs,]
 
@@ -509,12 +548,11 @@ I <- 0.01
   
 opt_mtry <- tuneRF(train, train$class, ntreeTry = nTT,
                stepFactor = sF, improve = I, trace = TRUE, plot = TRUE)
-no_mtry <- #
 
 cl <- makeCluster(detectCores()-2)
 registerDoParallel(cl)
 veg_rf_model <- randomForest(class~., data=train, proximity=TRUE, 
-                             ntree = 1000, mtry = no_mtry) # we can only run so many trees
+                             ntree = nTT, mtry = 4) # we can only run so many trees
 # because it makes predicting onto the raster surface take !!MUCH!! longer
 stopCluster(cl); remove(cl)
 
@@ -526,18 +564,16 @@ data.frame(print(importance(veg_rf_model, type = 2))) %>%
 plot(veg_rf_model)
 # generate a confusion matrix to determine accuracy on real data.
 test_prediction <- predict(veg_rf_model, test)
-kable %>% confusionMatrix(test_prediction, test$class)
+confusionMatrix(test_prediction, test$class)
 
 rm(cl, opt_mtry, test_prediction, train_prop)
 ```
-
 
 The number of mtry in the random forest model were tuned using the function tuneRF with the number of trys set to `r toString(nTT)`, a step factor of `r toString(sF)` and a relative minimum improvement in Out of Bag (OOB) error rate set at `r toString(I)`. The random forest model was than trained using `r toString(no_mtry)` mtry and `r toString(nTT)` trees, all using the RandomForest package. 
 
 ```{r remove tree parameters, echo = F}
 rm(no_mtry, nTT, I, sF)
 ```
-
 
 ```{r Predict random forest onto raster and smooth it, eval = F}
 
@@ -551,7 +587,7 @@ predict_rf <- terra::predict(object = predictors, model = veg_rf_model, cpkgs = 
 predict_rf_smooth <- focal(predict_rf, w = 5, fun = modal, na.policy= 'omit')
 plot(predict_rf_smooth, col = c('Red', '#2C664F', '#F8F5E6', '#B2AC88'))
 
-predict_rf <- writeRaster(predict_rf_smooth, file.path(here(), '/data/processed/PredictedVegClass-sm.tif'))
+predict_rf <- writeRaster(predict_rf_smooth, file.path(here(), '/data/processed/PredictedVegClass-sm.tif'), overwrite = T)
 ```
 
 
