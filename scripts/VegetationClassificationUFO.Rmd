@@ -2,7 +2,9 @@
 title: "Vegetation_Classification"
 author: "steppe"
 date: "2022-10-03"
-output: html_document
+output:
+  word_document: default
+  html_document: default
 ---
 
 The initial AIM sample design for each office was based upon small stratified areas - (Primary Sampling Units) PSU's which up to 3 plots per each of are to make inference of. The primary sampling units were based on older vegetation classification projects which do not perform as high as other mechanisms. 
@@ -10,6 +12,11 @@ The initial AIM sample design for each office was based upon small stratified ar
 We have used the in field AIM data to reclassify a number of plots in unusual strata such as: 'Other', 'Mixed Conifer', and 'Riparian'. We will use all of this reclassified AIM data to determine whether the PSU on the whole is classified as the same vegetation type as the points which were sampled within it. 
 
 To do this a very simple vegetation classification will be performed using a handful of spatial products. The central product will be the National Aerial Imagery Programs flight data. Supplemental data includes a 10m DEM which was previously re-processed using WhiteBoxTools, a 10m resolution slope dataset, and a 10m landform classification dataset. 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+knitr::opts_chunk$set(message = "hide")
+knitr::opts_chunk$set(warning = "hide")
+```
 
 ```{r Load Libraries}
 library(tidyverse)
@@ -17,12 +24,9 @@ library(terra)
 library(sf)
 library(here)
 set.seed(72)
-#install.packages('tigris', 'glcm', 'here')
 ```
 
 # Methods 
-
-A data set of XXX AIM plots was used ...
 
 ```{r Import and Subset AIM, echo = F, eval = F}
 
@@ -261,7 +265,7 @@ rm(texture_PrincComponents, all_textures, glcm.red, glcm.colour, texture_values,
 
 NAIP data were processed to create an NDVI band. NDVI is well suited for identifying sparsely vegetated areas, it may be useful in distinguishing salt desert from all other strata, and help in distinguishing between MMS and PJ. 
 
-```{r create NDVI band, echo = F}
+```{r create NDVI band, echo = F, eval = F}
 # (NIR - Red) / (NIR + Red)
 
 naip_NC <- rast(naip_NC_r)
@@ -399,7 +403,7 @@ random_drawn <- do.call(rbind, lapply(random, function(x)
   na_if("") 
 random_pts <- random_drawn %>% drop_na() 
 
-rm(random, twenty22, historicVeg, random_drawn, plot_drawn, reg_drawn)
+rm(random, twenty22, historicVeg)
 ```
 
 
@@ -407,7 +411,7 @@ To create a more equally balanced training data set, all `r toString(plot_drawn)
 
 Classified plots were randomly sampled to ensure an equal number of points per stratum, less Aspen and Mixed Conifer.
 
-```{r buffer points from GE and AIM , echo = F, eval = F}
+```{r buffer points from GE and AIM , echo = F}
 
 p <- file.path(here::here(), 'data/processed')
 
@@ -447,7 +451,7 @@ veg_pts <- bind_rows(veg_pts, random_pts, reg_pts) %>%
   as(., "Spatial") %>% 
   vect()
 
-rm(reg_pts, random_pts)
+rm(reg_pts, random_pts, plot_drawn, random_drawn, reg_drawn)
 ```
 
 https://valentinitnelav.github.io/satellite-image-classification-r/
@@ -501,16 +505,23 @@ names(predictors) <- c('NAIP_red', 'NAIP_green', 'NAIP_blue', 'NAIP_IR', 'NDVI',
 rm(naip_NC, texture, DEM, slope, PhysioPath, UFO_land, files, naip_IR, NDVI, path)
 ```
 
-```{r Extract Predictor Variables to Points, message = F, warning = 'hide'}
+```{r set random forest model parameters proportion, echo  = F}
+train_prop <- 0.7
+mTry <- 4
+nTT <- 1000
+sF <- 1.5
+I <- 0.01
+```
+
+```{r Extract Predictor Variables to Points, message = F, warning = 'hide', eval = F}
 library(caret)
 library(parallel)
 library(doParallel)
 library(randomForest)
 
-train_prop <- 0.7
 veg_pts <- project(veg_pts, crs(predictors))
-VegClass <- extract(predictors, veg_pts, method = 'simple', touches = F, fun = mean,
-                    weights = T) # note weights work on Lightscape, but not parkland. 
+VegClass <- extract(predictors, veg_pts, method = 'simple', touches = F, fun = mean )#,
+                  #  weights = T) # note weights work on Lightscape, but not parkland. 
 VegClass <- cbind(as.data.frame(veg_pts), VegClass[,2:ncol(VegClass)])
 VegClass <- VegClass[complete.cases(VegClass),]
 VegClass <- cbind(VegClass[,4:ncol(VegClass)], 'class' = VegClass[,3])
@@ -521,32 +532,35 @@ split_obs <- createDataPartition(VegClass$class,
                                  list = FALSE)
 train <- VegClass[split_obs,]
 test <- VegClass[-split_obs,]
-testOriginal <- veg_pts[-split_obs,]
+vp <- st_as_sf(veg_pts)
+testOriginal <- vp[-split_obs,]
 
-rm(VegClass, split_obs)
+mainDir <- '../data/processed/'
+subDir <- 'StratTest'
+
+ifelse(!dir.exists(file.path(mainDir, subDir)), dir.create(file.path(mainDir, subDir)), FALSE)
+st_write(testOriginal, file.path(mainDir, subDir, 'TestSetStratification.shp'), quiet = T)
+
+rm(VegClass, split_obs, testOriginal, vp, mainDir, subDir, testOriginal)
 ```
 
-The dataset of `r toString()` classified points were partioned into a `r toString(1-train_prop)` test and training set `r toString(train_prop)` using caret, the dataset was not balanced, see table XX for sample sizes.  
+The dataset of `r toString(nrow(veg_pts))` classified points were partioned into a `r toString(1-train_prop)` test and training set `r toString(train_prop)` using caret, the dataset was not balanced, see table XX for sample sizes.  
 
 ```{r Fit Random Forest Model, warning = F, message = F, eval = F}
 
-nTT <- 1000
-sF <- 1.5
-I <- 0.01
-  
 opt_mtry <- tuneRF(train, train$class, ntreeTry = nTT,
                stepFactor = sF, improve = I, trace = TRUE, plot = TRUE)
 
 cl <- makeCluster(detectCores()-2)
 registerDoParallel(cl)
 veg_rf_model <- randomForest(class~., data=train, proximity=TRUE, 
-                             ntree = nTT, mtry = 4)
+                             ntree = nTT, mtry = mTry)
 stopCluster(cl); remove(cl)
 
 saveRDS(veg_rf_model, file = filepath('../results/RandomForest', Sys.Date()))
 ```
 
-```{r Random Forest Results, echo = F, warning = F, message = F}
+```{r Random Forest Results, echo = F, warning = F, message = F, eval = F}
 data.frame(print(importance(veg_rf_model, type = 2))) %>% 
   rownames_to_column('Variable') %>% 
   arrange(-MeanDecreaseGini) %>% 
@@ -560,10 +574,10 @@ confusionMatrix(test_prediction, test$class)
 rm(cl, opt_mtry, test_prediction, train_prop, test, train)
 ```
 
-The number of mtry in the random forest model were tuned using the function tuneRF with the number of trys set to `r toString(nTT)`, a step factor of `r toString(sF)` and a relative minimum improvement in Out of Bag (OOB) error rate set at `r toString(I)`. The random forest model was than trained using `r toString(no_mtry)` mtry and `r toString(nTT)` trees, all using the RandomForest package. 
+The number of mtry in the random forest model were tuned using the function tuneRF with the number of trys set to `r toString(nTT)`, a step factor of `r toString(sF)` and a relative minimum improvement in Out of Bag (OOB) error rate set at `r toString(I)`. The random forest model was than trained using `r toString(mTry)` mtry and `r toString(nTT)` trees, all using the RandomForest package. 
 
 ```{r remove tree parameters, echo = F}
-rm(no_mtry, nTT, I, sF)
+rm(Mtry, nTT, I, sF)
 ```
 
 ```{r Predict random forest onto raster and smooth it, eval = F}
@@ -584,6 +598,9 @@ predict_rf <- writeRaster(predict_rf_smooth, file.path(here(), '/data/processed/
 The Random Forest classification model was predicted onto a raster surface using the package Terra. This raster was then smooth using focal statistics, with a window of 5 cells, using the mode as the value to return. 
 
 ```{r Compare to original stratification}
+testOriginal <- st_read('../data/processed/StratTest/TestSetStratification.shp', quiet = T) %>%
+  vect()
+
 pstrat <- '/media/sagesteppe/ExternalHD/UFO_AIM_Design_Stratification/processed/'
 original_strat <- rast(file.path(pstrat, "UFO_Strata.tif"))
 
@@ -616,9 +633,16 @@ rm(testOriginal, mdsOrig, mdsPost, Mode, post_strat, outPost, outOrig, original_
 
 # Comparision of New and Old vegetation classification models. 
 
-```{r}
+```{r make waffle charts of changes in vegetation, echo = F,  out.width="50%", fig.cap = "Changes in Estimated Land Cover between the initial stratification and post-stratification"}
 library(waffle)
 library(tidyverse)
+library(cowplot)
+
+strata_pal <- setNames(
+  c('#4A5A28', '#ADB1B9', '#CEB88E', '#574039', '#B64841',
+    '#1357a6', '#1B1212', '#F9E076', '#39993A', '#00688B'),
+  c('PJ', 'SS', 'SD', 'MMS', 'AS', 'RI', 'OT', 'GR', 'PP', 'MC')
+)
 
 # original land cover of sample design
 
@@ -650,11 +674,13 @@ strata_waffle <- ggplot(reprocessedGAP, aes(fill = Code, values = Percent)) +
                     labels = names(strata_pal)) + 
   coord_equal() + 
   theme_void() + 
-  labs(title = 'land cover in the initial design')  +
+  labs(title = 'initial stratification')  +
+  guides(fill=guide_legend(ncol=2)) +
   theme(plot.title = element_text(hjust = 0.5), 
-       legend.key.size = unit(0.2, "cm"))
+        legend.title.align = 0.5)
 
-rm(reprocessedGAP)
+legend <- get_legend(strata_waffle)
+strata_waffle <- strata_waffle + theme(legend.position='none')
 
 # now a waffle of what percent habitat plots were located actually IN ??
 
@@ -668,29 +694,33 @@ veg_pts <- veg_pts %>%
   mutate(Percent = round((n/sum(n))*100 ))  %>% 
   arrange(-Percent)
 
+strata_pal <- strata_pal[order(match(names(strata_pal),veg_pts$VegClass))]
+strata_pal3 <- strata_pal[1:nrow(veg_pts)]
+
 random_waffle <- ggplot(veg_pts, aes(fill = VegClass, values = Percent)) + 
   geom_waffle(color = 'white') + 
   scale_fill_manual(name = 'Statum',
-                    values = strata_pal2, 
-                    labels = names(strata_pal2)) + 
+                    values = strata_pal3, 
+                    labels = names(strata_pal3)) + 
   coord_equal() + 
   theme_void() + 
-  labs(title = 'land cover based on modeling')  +
-  theme(plot.title = element_text(hjust = 0.5), 
-       legend.key.size = unit(0.2, "cm"))
-
+  theme(legend.position="none") +
+  labs(title = 'human classification')  +
+  theme(plot.title = element_text(hjust = 0.5))
 
 #  a waffle of what percent habitats exist in UFO based on reclassification
 
-reclassified <- rast(file.path(here(), 'data/processed/PredictedVegClass-sm.tif'))
-
+reclassified <- rast(file.path(here(), 'data/processed/PredictedVegClass.tif'))
+#plot(reclassified, col = c('#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00','#ffff33'))
 area <- values(reclassified)
 area <- area[!is.na(area)] # 4 SS, # 3 SD, 2 PJ, 1 MMS
 area <- aggregate(area, list(num=area), length)
+
 ltable <- data.frame(
-  num = c(1,2,3,4), 
-  Stratum = c('MMS', 'PJ', 'SD', 'SS')
+  num = c(1, 2, 3, 4, 5, 6), 
+  Stratum = c('AS', 'MC', 'MMS', 'PJ', 'SD', 'SS')
 ) 
+
 vegclass <- area %>% 
   inner_join(., ltable, 
             by = 'num') %>% 
@@ -708,34 +738,86 @@ reclass_waffle <- ggplot(vegclass, aes(fill = Stratum, values = Percent)) +
                     labels = names(strata_pal2)) + 
   coord_equal() + 
   theme_void() + 
-  labs(title = 'land cover based on modeling')  +
-  theme(plot.title = element_text(hjust = 0.5), 
-       legend.key.size = unit(0.2, "cm"))
+  theme(legend.position="none") + 
+  labs(title = 're-modelled classification')  +
+  theme(plot.title = element_text(hjust = 0.5))
 
-plot_grid(strata_waffle, reclass_waffle, ncol = 1)
+plot_col <- plot_grid(strata_waffle, random_waffle,
+                      reclass_waffle, legend, ncol = 1, rel_widths = c(1,1,1,0.75),
+                      rel_heights = c(1,1,1,0.75))
+
+title <- ggdraw() + 
+  draw_label(
+    "Percent Land Cover",
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) + theme(plot.margin = ggplot2::margin(0, 0, 0, 3.5,  "cm"))
+
+plot_grid(
+  title, plot_col,
+  ncol = 1,
+  # rel_heights values control vertical title margins
+  rel_heights = c(0.1, 1) 
+)
+
+rm(strata_pal2, strata_pal3, random_waffle, reclass_waffle, legend, plot_col)
+```
 
 
-# show the flow from stratified land cover to reclassified land cover
-
+```{r compare values between rasters to create flow chart, eval = F}
 # first match the resolutions of these products, we will resample the coarser original
 # to the finer remapped classification. 
 original_strat <- rast(file.path(p, 'processed', 'UFO_Strata.tif'))
-original_strat <- project(original_strat, crs(reclassified))
+original_strat <- project(original_strat, crs(reclassified), method = 'near')
 orig_strat_resamp <- resample(original_strat, reclassified, method = 'near')
 orig_strat_resamp <- mask(orig_strat_resamp, reclassified)
-
 rm(original_strat)
+area <- values(orig_strat_resamp)
+area <- area[!is.na(area)] 
+area <- aggregate(area, list(num=area), length)
+area <- area %>% 
+  inner_join(., reprocessedGAP %>% select(RasterValue, Code), 
+            by = c('num' = 'RasterValue')) %>% 
+  rename(Cells = x)
+# do !!!NOT!!! try this on gov't computer, reach out to reed (sagesteppe) and he can run it!!!!!
 
-vorig <- as.matrix(orig_strat_resamp, wide = T, na.rm = T)
-vclassified <- as.matrix(reclassified, wide = T, na.rm = T)
-rm(vorig, vclassified)
+r <- rast(list(orig_strat_resamp, reclassified))
+rvals <- as.matrix(r, na.rm = T)
+rvals <- rvals[complete.cases(rvals),]
+rvals <- data.frame(rvals) %>% 
+  group_by(lyr1) %>% 
+  count(BPS_CODE) %>% 
+  rename(Reclassified = lyr1,
+        Original= BPS_CODE)
 
-opoly <- as.polygons(orig_strat_resamp)
-opoly <- sf::st_as_sf(opoly)
+p1 <- '/media/sagesteppe/ExternalHD/plot_post_stratification/data/processed'
+write.csv(rvals, file.path(p1, 'Extracted_raster_values.csv'), row.names = F)
+write.csv(area, file.path(p1, 'Count_OriginalStrat_raster_values.csv'), row.names = F)
+rm(d, original_strat, reclassified)
+```
 
-ggplot(opoly) + 
-  geom_sf()
+```{r reimport data for showing flow from veg classes, fig.cap="This diagram shows how raster cells in the UFO are redistributed from the original sample design, to the the reclassified spatial product for the sample design"}
+library(circlize)
+p1 <- '/media/sagesteppe/ExternalHD/plot_post_stratification/data/processed'
+rvals <- read.csv(file.path(p1, 'Extracted_raster_values.csv'))
+area <- read.csv(file.path(p1, 'Count_OriginalStrat_raster_values.csv'))
 
+rvals <- rvals %>% 
+  mutate(n = round( n/100000, 1)) %>% 
+  pivot_wider(names_from = 'Reclassified', values_from = 'n') %>% 
+  column_to_rownames('Original') %>% # for circle chart. 
+  as.matrix()
+
+colnames(rvals) <- paste0('to ', ltable$Stratum)
+rownames(rvals) <- reprocessedGAP %>% 
+  arrange(RasterValue) %>% 
+  pull(Code)
+sp2 <- strata_pal # create a palette to mark the colors in both ends
+names(sp2) <- paste0('to ', names(strata_pal))
+all_pals<- c(strata_pal, sp2)
+chordDiagram(rvals, transparency = 0.5, directional = 1, 
+             grid.col = all_pals, diffHeight  = -0.04)
 ```
 
 
@@ -744,7 +826,7 @@ The initial AIM sample design was based upon a stratification which included `r`
 
 # Citations
 
-```{r}
+```{r Citations, echo = F}
 c("terra", "glcm", "RStoolbox", "randomForest", "caret", "parallel", "doParallel") %>%
   map(citation) %>%
   print(style = "text")
