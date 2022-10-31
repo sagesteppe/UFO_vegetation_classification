@@ -50,7 +50,7 @@ plots <- left_join(AIM_plots, PIntercept, by = c('PrimaryKey' = 'PrimaryKey'))
 rm(UFO_buffered)
 ```
 
-NAIP Imagery for Colorado 2019 was downloaded from the official repository at Box in Fall 2022. While decoding from MrSID to tif file formats, their resolution was reduced by a factor of two using the 'mrsiddecode' program (Vers. 9.5.1.4427) from LizardTech. These raster tiles were united via mosaic, cropped to the extent of the Field Office Buffer, and masked to BLM administered surface areas. and they were aligned with previously generated raster datasets derived from a 10m DEM. 
+Colorado 2019 NAIP Imagery were downloaded from the official repository at Box in Fall 2022. While decoding from MrSID to tif file formats, their resolution was reduced by a factor of four using the 'mrsiddecode' program (Vers. 9.5.1.4427) from LizardTech. This effectively reducing their resolution to 9.6 meters. Following decompression of MrSID data, all spatial data processing occurred using R version 4.2.1, all computing performed on linux Ubuntu (20 & 22) on multiple hardware. These raster tiles were united via mosaic, cropped to the extent of the Field Office's ownership, and masked to BLM administered surface areas. These data were then aligned with previously generated raster data sets derived from a 10m DEM; when required all re-sampling of these tiles were achieved using cubic spline interpolation.
 
 ```{bash NAIP imagery extraction and decoding, eval = F, echo = F}
 
@@ -185,7 +185,11 @@ naip_NC <- resample(naip_NC, dem, method = 'cubicspline', threads = 20,
                     filename = file.path(path, 'NC_naip_resamp.tif'))
 ```
 
-A Gray Level Co-occurrence Matrix (GLCM) was created using the glcm package to create a texture raster layer to aid in classification. Texture bands are, among other properties, capable of indicating the amounts of heterogeneity of habitat types across the landscape. 
+```{r settings for texture band creation}
+stats <- c("mean", "variance", 'homogeneity', 'contrast', 'dissimilarity')
+wind <- c(5, 5)
+```
+
 
 ```{r Create Texture Raster band, echo = F, eval = F}
 
@@ -198,21 +202,20 @@ library(glcm)
 
 path <- '/media/reed/ExternalHD/NAIP/processed'
 files <- list.files(path, pattern = 'resamp')
-stats <- c("mean", "variance", 'homogeneity', 'contrast', 'dissimilarity')
 
 naip_IR_r <- raster::raster(file.path(path, files[grep('IR*', files)]))
 naip_NC_r <- raster::raster(file.path(path, files[grep('NC*', files)]))
 
 Sys.time()
 glcm.red <- glcm::glcm(naip_IR_r,
-                 window = c(5, 5), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
+                 window = wind, shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
                  statistics = stats, 
                  min_x = 1, max_x = 255, na_opt = 'ignore', na_val = 0)
 Sys.time()
 
 Sys.time()
 glcm.colour <- glcm::glcm(naip_NC_r,
-                 window = c(5, 5), shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
+                 window = wind, shift = list(c(0,1), c(1,1), c(1,0), c(1,-1)), 
                  statistics = stats, 
                  min_x = 1, max_x = 255, na_opt = 'ignore', na_val = 0)
 Sys.time()
@@ -263,6 +266,8 @@ writeRaster(texture_PrincComponents, file.path(path, 'Textures_pca.tif'), overwr
 
 rm(texture_PrincComponents, all_textures, glcm.red, glcm.colour, texture_values, rf_veg_pca, texture_PC, files, sr)
 ```
+
+A Gray Level Co-occurrence Matrix (GLCM) was created using the glcm package to create a texture raster layer to aid in classification. Texture bands are, among other properties, capable of indicating the amounts of heterogeneity of habitat types across the landscape. Texture layers were produced using both NAIP natural color and infrared data. Texture statistics: `r toString(paste0(stats))`, with windows of `r toString(wind[1])` in both direction, shifts in all directions (**Queen's case**), and the default value of 32 grey levels. 
 
 NAIP data were processed to create an NDVI band. NDVI is well suited for identifying sparsely vegetated areas, it may be useful in distinguishing salt desert from all other strata, and help in distinguishing between MMS and PJ. 
 
@@ -408,7 +413,7 @@ rm(random, twenty22, historicVeg)
 ```
 
 
-To create a more equally balanced training data set, all `r toString(plot_drawn)` AIM and LMF points were exported to Google Earth and `r toString(nrow(plot_class))` were classified. `r toString(nrow(random_drawn))` random points were generated across the focal BLM district and  `r toString(nrow(random_pts))` classified in Google Earth via the vegetation ecologist which lead the AIM sampling in 2022. An additional `r toString(nrow(reg_drawn))` regularly placed plots were drawn across the extent of the field office and `r toString(nrow(reg_pts))` were classified. Unclassified computer generated points were generally those that fell upon a wide road, or were outside BLM Ownership. Unclassified AIM/LMF points were LMF points which must have represented the revisitation of a single plot. 
+To create a larger training data set, all `r toString(plot_drawn)` AIM and LMF points were exported to Google Earth and `r toString(nrow(plot_class))` were classified. `r toString(nrow(random_drawn))` random points were generated across the focal BLM district and  `r toString(nrow(random_pts))` classified in Google Earth via the vegetation ecologist which lead the AIM sampling in 2022. An additional `r toString(nrow(reg_drawn))` regularly placed plots were drawn across the extent of the field office and `r toString(nrow(reg_pts))` were classified. Unclassified computer generated points were generally those that fell upon a wide road, or were outside BLM Ownership. Unclassified AIM/LMF points were LMF points which must have represented the revisitation of a single plot. 
 
 Classified plots were randomly sampled to ensure an equal number of points per stratum, less Aspen and Mixed Conifer.
 
@@ -540,6 +545,7 @@ subDir <- 'StratTest'
 
 ifelse(!dir.exists(file.path(mainDir, subDir)), dir.create(file.path(mainDir, subDir)), FALSE)
 st_write(testOriginal, file.path(mainDir, subDir, 'TestSetStratification.shp'), quiet = T)
+write.csv(test, file.path(mainDir, 'rf_testing_data.csv'), row.names  = F)
 
 rm(VegClass, split_obs, testOriginal, vp, mainDir, subDir, testOriginal)
 ```
@@ -558,36 +564,43 @@ veg_rf_model <- randomForest(class~., data=train, proximity=TRUE,
 stopCluster(cl); remove(cl)
 
 saveRDS(veg_rf_model, file = paste0('../results/stats/RandomForest', Sys.Date(), '.rds'))
+
+rm(cl, train, opt_mtry)
 ```
 
-```{r Random Forest Results, echo = F, warning = F, message = F, eval = F}
+```{r Random Forest Results, echo = F, warning = F, message = F}
 
-veg_rf_model <- readRDS(veg_rf_model, 
-                        file = paste0('../results/stats/RandomForest', Sys.Date(), '.rds'))
+prds <- '/media/sagesteppe/ExternalHD/plot_post_stratification/results/stats'
+veg_rf_model <- readRDS(file = file.path(prds, 'RandomForest2022-10-31.rds'))
+test <- read.csv(file.path('../data/processed/', 'rf_testing_data.csv'))
+test$class <- as.factor(test$class)
 
-data.frame(print(importance(veg_rf_model, type = 2))) %>% 
+data.frame(randomForest::importance(veg_rf_model, type = 2)) %>% 
   rownames_to_column('Variable') %>% 
   arrange(-MeanDecreaseGini) %>% 
-  knitr::kable()
+  knitr::kable( col.names = c('Variable', 'Importance'),  align = "l", digits = 3,
+                caption = "Variable Importance in Random Forest Model")
+
 
 plot(veg_rf_model)
 # generate a confusion matrix to determine accuracy on real data.
 test_prediction <- predict(veg_rf_model, test)
-cm1 <- confusionMatrix(test_prediction, test$class)
+cm1 <- caret::confusionMatrix(test_prediction, test$class)
 
-cm
-
-rm(cl, opt_mtry, test_prediction, train_prop, test, train)
+rm(test_prediction, train_prop, test, prds)
 ```
 
-The number of mtry in the random forest model were tuned using the function tuneRF with the number of trys set to `r toString(nTT)`, a step factor of `r toString(sF)` and a relative minimum improvement in Out of Bag (OOB) error rate set at `r toString(I)`. The random forest model was than trained using `r toString(mTry)` mtry and `r toString(nTT)` trees, all using the RandomForest package. 
+The number of mtry in the random forest model were tuned using the function tuneRF with the number of trys set to `r toString(nTT)`, a step factor of `r toString(sF)` and a relative minimum improvement in Out of Bag (OOB) error rate set at `r toString(I)`. The random forest model was then trained using `r toString(mTry)` mtry and `r toString(nTT)` trees, all using the RandomForest package. 
 
-While the accuracy for the model was `r toString(round(cm1[["overall"]][["Accuracy"]],3))` (range `r toString(round(cm1[["overall"]][["AccuracyLower"]],2))` - `r toString(round(cm1[["overall"]][["AccuracyUpper"]], 2))`), due to an imbalance in the number of observations per group a more appropriate for evaluating the overall performance of the model, is  Kappa metric which was `r toString(round(cm1[["overall"]][["Kappa"]], 3))`.
+While the accuracy for the model was `r toString(round(cm1[["overall"]][["Accuracy"]],3))` (range `r toString(round(cm1[["overall"]][["AccuracyLower"]],2))` - `r toString(round(cm1[["overall"]][["AccuracyUpper"]], 2))`), due to an imbalance in the number of observations per group a more appropriate for evaluating the overall performance of the model, is the Kappa metric, `r toString(round(cm1[["overall"]][["Kappa"]], 3))`.
 
-Notably, the model has high rates of Specificity, showing that when it predicts a vegetation onto a pixel cell, the prediction is usually correct; less so for prediction of Pinon-Juniper. However, the model suffers from low Sensitivity, indicating that it is unable to detect all occurrences of a vegetation type. For example, the model is only able to appropriately classify half of the occurrences of Sage Steppe and Mixed Mountain Shrub. 
+Notably, the model has high rates of Specificity (median = `r toString(round(median(cm1[[4]][, grep('Spec', colnames(cm1[[4]]))]), 2))`), showing that when it predicts a vegetation type onto a pixel cell, the prediction is usually correct; less so for prediction of Pinon-Juniper (`r toString(round(cm1[[4]][grep('PJ', rownames(cm1[['byClass']]) ,'MMS') , grep('Spec', colnames(cm1[[4]])) ], 3))`). However, the model suffers from low Sensitivity, indicating that it is unable to detect all occurrences of a vegetation type. For example, the model is only able to appropriately classify half of the occurrences of Sage Steppe (`r toString(round(cm1[[4]][grep('SS', rownames(cm1[['byClass']]) ,'MMS') , grep('Sens', colnames(cm1[[4]])) ], 3))`
+) and Mixed Mountain Shrub (`r toString(round(cm1[[4]][grep('MMS', rownames(cm1[['byClass']]) ,'MMS') , grep('Sens', colnames(cm1[[4]])) ], 3))`). Accordingly this model is susceptible to over-predicting the occurrence of Pinon-Juniper, at the expense of Mixed Mountain Shrub and Sagesteppe. This is to be expected given the sample imbalance, which contained many more plots PJ than other types. However numerous trials of reducing the number of PJ plots did not significantly increase the quality of predictions. Further indicating, that the features used are not adequate for distinguishing between the transitional points enough Pinons and Junipers are present where SS phases into PJ, and where shrubs increase in PJ and it phases into MMS. 
+
 
 ```{r remove tree parameters, echo = F, warning = F}
 rm(mTry, nTT, I, sF)
+
 ```
 
 ```{r Predict random forest onto raster and smooth it, eval = F}
@@ -642,8 +655,8 @@ rm(testOriginal, mdsOrig, mdsPost, Mode, post_strat, outPost, outOrig, original_
 ```
 
 # Comparison of New and Old vegetation classification models. 
-
-```{r make waffle charts of changes in vegetation, echo = F,  fig.height = 8, fig.width = 3, fig.cap = "Changes in Estimated Land Cover between the initial stratification and post-stratification"}
+ a ton of test words that should wrap right....
+```{r make waffle charts of changes in vegetation, echo = F,  fig.height = 8, fig.width = 3, fig.cap = "Changes in Estimated Land Cover between the initial stratification and post-stratification", out.extra='style="float:right; padding:10px"'}
 library(waffle)
 library(tidyverse)
 library(cowplot)
@@ -778,6 +791,7 @@ plot_grid(
 rm(strata_pal2, strata_pal3, random_waffle, reclass_waffle, legend, plot_col)
 ```
 
+lots more test words we hope wrap right
 
 ```{r compare values between rasters to create flow chart, eval = F}
 # first match the resolutions of these products, we will resample the coarser original
