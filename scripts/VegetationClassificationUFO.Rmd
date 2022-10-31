@@ -18,11 +18,12 @@ knitr::opts_chunk$set(message = "hide")
 knitr::opts_chunk$set(warning = "hide")
 ```
 
-```{r Load Libraries}
-library(tidyverse)
-library(terra)
-library(sf)
-library(here)
+```{r Load Libraries, message = F ,warning = F}
+shhh <- suppressPackageStartupMessages
+shhh(library(tidyverse))
+shhh(library(terra))
+shhh(library(sf))
+shhh(library(here))
 set.seed(72)
 ```
 
@@ -454,7 +455,6 @@ veg_pts <- bind_rows(veg_pts, random_pts, reg_pts) %>%
 rm(reg_pts, random_pts, plot_drawn, random_drawn, reg_drawn)
 ```
 
-https://valentinitnelav.github.io/satellite-image-classification-r/
 
 ```{r Import all Geographic Data and extract occurrences to points, eval = F}
 
@@ -554,13 +554,17 @@ opt_mtry <- tuneRF(train, train$class, ntreeTry = nTT,
 cl <- makeCluster(detectCores()-2)
 registerDoParallel(cl)
 veg_rf_model <- randomForest(class~., data=train, proximity=TRUE, 
-                             ntree = nTT, mtry = mTry)
+                             ntree = nTT, mtry = 9)
 stopCluster(cl); remove(cl)
 
-saveRDS(veg_rf_model, file = filepath('../results/RandomForest', Sys.Date()))
+saveRDS(veg_rf_model, file = paste0('../results/stats/RandomForest', Sys.Date(), '.rds'))
 ```
 
 ```{r Random Forest Results, echo = F, warning = F, message = F, eval = F}
+
+veg_rf_model <- readRDS(veg_rf_model, 
+                        file = paste0('../results/stats/RandomForest', Sys.Date(), '.rds'))
+
 data.frame(print(importance(veg_rf_model, type = 2))) %>% 
   rownames_to_column('Variable') %>% 
   arrange(-MeanDecreaseGini) %>% 
@@ -569,15 +573,21 @@ data.frame(print(importance(veg_rf_model, type = 2))) %>%
 plot(veg_rf_model)
 # generate a confusion matrix to determine accuracy on real data.
 test_prediction <- predict(veg_rf_model, test)
-confusionMatrix(test_prediction, test$class)
+cm1 <- confusionMatrix(test_prediction, test$class)
+
+cm
 
 rm(cl, opt_mtry, test_prediction, train_prop, test, train)
 ```
 
 The number of mtry in the random forest model were tuned using the function tuneRF with the number of trys set to `r toString(nTT)`, a step factor of `r toString(sF)` and a relative minimum improvement in Out of Bag (OOB) error rate set at `r toString(I)`. The random forest model was than trained using `r toString(mTry)` mtry and `r toString(nTT)` trees, all using the RandomForest package. 
 
-```{r remove tree parameters, echo = F}
-rm(Mtry, nTT, I, sF)
+While the accuracy for the model was `r toString(round(cm1[["overall"]][["Accuracy"]],3))` (range `r toString(round(cm1[["overall"]][["AccuracyLower"]],2))` - `r toString(round(cm1[["overall"]][["AccuracyUpper"]], 2))`), due to an imbalance in the number of observations per group a more appropriate for evaluating the overall performance of the model, is  Kappa metric which was `r toString(round(cm1[["overall"]][["Kappa"]], 3))`.
+
+Notably, the model has high rates of Specificity, showing that when it predicts a vegetation onto a pixel cell, the prediction is usually correct; less so for prediction of Pinon-Juniper. However, the model suffers from low Sensitivity, indicating that it is unable to detect all occurrences of a vegetation type. For example, the model is only able to appropriately classify half of the occurrences of Sage Steppe and Mixed Mountain Shrub. 
+
+```{r remove tree parameters, echo = F, warning = F}
+rm(mTry, nTT, I, sF)
 ```
 
 ```{r Predict random forest onto raster and smooth it, eval = F}
@@ -626,14 +636,14 @@ mdsPost <- outPost %>%
   group_by(ID) %>% 
   summarise(RestratifiedCover = Mode(lyr1))
 
-inner_join(mdsOrig, mdsPost, by = 'ID')
+change <- inner_join(mdsOrig, mdsPost, by = 'ID')
 
 rm(testOriginal, mdsOrig, mdsPost, Mode, post_strat, outPost, outOrig, original_strat)
 ```
 
-# Comparision of New and Old vegetation classification models. 
+# Comparison of New and Old vegetation classification models. 
 
-```{r make waffle charts of changes in vegetation, echo = F,  out.width="50%", fig.cap = "Changes in Estimated Land Cover between the initial stratification and post-stratification"}
+```{r make waffle charts of changes in vegetation, echo = F,  fig.height = 8, fig.width = 3, fig.cap = "Changes in Estimated Land Cover between the initial stratification and post-stratification"}
 library(waffle)
 library(tidyverse)
 library(cowplot)
@@ -677,7 +687,8 @@ strata_waffle <- ggplot(reprocessedGAP, aes(fill = Code, values = Percent)) +
   labs(title = 'initial stratification')  +
   guides(fill=guide_legend(ncol=2)) +
   theme(plot.title = element_text(hjust = 0.5), 
-        legend.title.align = 0.5)
+        legend.title.align = 0.5,
+        plot.margin = unit(c(0.25,0.25,0.25,0.25), "cm"))
 
 legend <- get_legend(strata_waffle)
 strata_waffle <- strata_waffle + theme(legend.position='none')
@@ -706,11 +717,13 @@ random_waffle <- ggplot(veg_pts, aes(fill = VegClass, values = Percent)) +
   theme_void() + 
   theme(legend.position="none") +
   labs(title = 'human classification')  +
-  theme(plot.title = element_text(hjust = 0.5))
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.margin = unit(c(0.25,0.25,0.25,0.25), "cm"))
 
 #  a waffle of what percent habitats exist in UFO based on reclassification
 
 reclassified <- rast(file.path(here(), 'data/processed/PredictedVegClass.tif'))
+
 #plot(reclassified, col = c('#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00','#ffff33'))
 area <- values(reclassified)
 area <- area[!is.na(area)] # 4 SS, # 3 SD, 2 PJ, 1 MMS
@@ -740,7 +753,8 @@ reclass_waffle <- ggplot(vegclass, aes(fill = Stratum, values = Percent)) +
   theme_void() + 
   theme(legend.position="none") + 
   labs(title = 're-modelled classification')  +
-  theme(plot.title = element_text(hjust = 0.5))
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.margin = unit(c(0.25,0.25,0.25,0.25), "cm"))
 
 plot_col <- plot_grid(strata_waffle, random_waffle,
                       reclass_waffle, legend, ncol = 1, rel_widths = c(1,1,1,0.75),
@@ -752,7 +766,7 @@ title <- ggdraw() +
     fontface = 'bold',
     x = 0,
     hjust = 0
-  ) + theme(plot.margin = ggplot2::margin(0, 0, 0, 3.5,  "cm"))
+  ) + theme(plot.margin = ggplot2::margin(0, 0, 0, 1.5,  "cm"))
 
 plot_grid(
   title, plot_col,
@@ -780,8 +794,8 @@ area <- area %>%
   inner_join(., reprocessedGAP %>% select(RasterValue, Code), 
             by = c('num' = 'RasterValue')) %>% 
   rename(Cells = x)
-# do !!!NOT!!! try this on gov't computer, reach out to reed (sagesteppe) and he can run it!!!!!
 
+# probably dont try the following on gov't computer, reach out to reed (sagesteppe) and he can run it
 r <- rast(list(orig_strat_resamp, reclassified))
 rvals <- as.matrix(r, na.rm = T)
 rvals <- rvals[complete.cases(rvals),]
@@ -797,27 +811,36 @@ write.csv(area, file.path(p1, 'Count_OriginalStrat_raster_values.csv'), row.name
 rm(d, original_strat, reclassified)
 ```
 
-```{r reimport data for showing flow from veg classes, fig.cap="This diagram shows how raster cells in the UFO are redistributed from the original sample design, to the the reclassified spatial product for the sample design"}
-library(circlize)
+```{r reimport data for showing flow from veg classes, echo = F, fig.cap="This diagram shows how raster cells in the UFO are redistributed from the original sample design, to the the reclassified spatial product for the sample design", fig.height = 6, fig.width = 6}
+shhh(library(circlize))
 p1 <- '/media/sagesteppe/ExternalHD/plot_post_stratification/data/processed'
 rvals <- read.csv(file.path(p1, 'Extracted_raster_values.csv'))
 area <- read.csv(file.path(p1, 'Count_OriginalStrat_raster_values.csv'))
 
 rvals <- rvals %>% 
-  mutate(n = round( n/100000, 1)) %>% 
+  mutate(n = (n/sum(n))*100) %>% 
   pivot_wider(names_from = 'Reclassified', values_from = 'n') %>% 
   column_to_rownames('Original') %>% # for circle chart. 
   as.matrix()
 
-colnames(rvals) <- paste0('to ', ltable$Stratum)
+colnames(rvals) <- paste0('to', ltable$Stratum)
 rownames(rvals) <- reprocessedGAP %>% 
   arrange(RasterValue) %>% 
   pull(Code)
 sp2 <- strata_pal # create a palette to mark the colors in both ends
-names(sp2) <- paste0('to ', names(strata_pal))
+names(sp2) <- paste0('to', names(strata_pal))
 all_pals<- c(strata_pal, sp2)
+
+#circos.par(gap.after = c("AS" = 5, "GR" = 5, "MC" = 5, "MMS" = 5, "OT" = 5, 
+#                          "PJ" = 1, "PP" = 5,  "RI" = 5,  "SS" = 0,  "SD" = 0, 
+#                         "toAS" = 5, "toMC" = 5, "toMMS" = 0, "toPJ" = 0, "toSD" = 0, "toSS" = 5))
+par(mar = c(1.5, 1.5, 4.1, 1.5))
+circos.par(start.degree = 0)
 chordDiagram(rvals, transparency = 0.5, directional = 1, 
-             grid.col = all_pals, diffHeight  = -0.04)
+             grid.col = all_pals, diffHeight  = -0.04, big.gap = 10)
+abline(h = 0, lty = 2, col = "#00000080")
+title("Movement of Pixels from stratification\n(bottom) to post stratification (top)")
+circos.clear()
 ```
 
 
@@ -826,7 +849,7 @@ The initial AIM sample design was based upon a stratification which included `r`
 
 # Citations
 
-```{r Citations, echo = F}
+```{r Citations, echo = F, comment = ""}
 c("terra", "glcm", "RStoolbox", "randomForest", "caret", "parallel", "doParallel") %>%
   map(citation) %>%
   print(style = "text")
