@@ -588,6 +588,8 @@ saveRDS(veg_rf_model, file = paste0('../results/stats/RandomForest', Sys.Date(),
 rm(cl, train, opt_mtry)
 ```
 
+The number of mtry in the random forest model were tuned using the function 'tuneRF' with the number of try's set to `r toString(nTT)`, a step factor of `r toString(sF)` and a relative minimum improvement in Out of Bag (OOB) error rate set at `r toString(I)`. The random forest model was then trained using `r toString(mTry)` mtry and `r toString(nTT)` trees, all using the RandomForest package. 
+
 ```{r Random Forest Results, echo = F, warning = F, message = F}
 
 prds <- '/media/sagesteppe/ExternalHD/plot_post_stratification/results/stats'
@@ -605,19 +607,20 @@ data.frame(randomForest::importance(veg_rf_model, type = 2)) %>%
 # generate a confusion matrix to determine accuracy on real data
 
 test_prediction <- predict(veg_rf_model, test)
-cm1 <- caret::confusionMatrix(test_prediction, test$class)
+cmRestrat <- caret::confusionMatrix(test_prediction, test$class)
 
-knitr::kable(cm1$table, caption = 'Confusion matrix for RF model')
-#knitr::kable()
+knitr::kable(cmRestrat$table, caption = 'Confusion matrix for RF model')
 
 rm(test_prediction, train_prop, test, prds)
 ```
+
 
 ```{r original GAP evaluation, echo = F, warning = F}
 
 p <- '/media/sagesteppe/ExternalHD/UFO_AIM_Design_Stratification'
 pts2test <- st_read('../data/processed/StratTest/TestSetStratification.shp', quiet = T) %>% vect()
 gap <- rast('/media/sagesteppe/ExternalHD/UFO_AIM_Design_Stratification/processed/UFO_Strata.tif')
+
 pts2test <- project(pts2test, crs(gap))
 reprocessedGAP <- read.csv(file.path(p, 'processed', 'UFO_strata_areas.csv')) %>% 
   select(RasterValue, Code)
@@ -639,12 +642,19 @@ mdsOrig <- a %>%
   select(True = VegClass, Original = Code) %>% 
   mutate(across(.cols = everything(), ~ factor(.x, levels = factor_lvls)))
 
-caret::confusionMatrix(mdsOrig$True, mdsOrig$Original)
+cmOrig <- caret::confusionMatrix(mdsOrig$True, mdsOrig$Original)
 
-rm(pts2test, factor_lvls, a, mdsOrig)
+rm(pts2test, factor_lvls, a, mdsOrig, gap)
 ```
 
-The number of mtry in the random forest model were tuned using the function 'tuneRF' with the number of try's set to `r toString(nTT)`, a step factor of `r toString(sF)` and a relative minimum improvement in Out of Bag (OOB) error rate set at `r toString(I)`. The random forest model was then trained using `r toString(mTry)` mtry and `r toString(nTT)` trees, all using the RandomForest package. 
+```{r plot confusion matrices, warning = F}
+
+
+knitr::kable(cmRestrat$table, caption = 'Confusion matrix for RF model')
+
+cmOrig
+```
+
 
 While the accuracy for the model was `r toString(round(cm1[["overall"]][["Accuracy"]],3))` (range `r toString(round(cm1[["overall"]][["AccuracyLower"]],2))` - `r toString(round(cm1[["overall"]][["AccuracyUpper"]], 2))` 95 % confidence interval), due to an imbalance in the number of observations per group a more appropriate for evaluating the overall performance of the model, is the Kappa metric, `r toString(round(cm1[["overall"]][["Kappa"]], 3))`.
 
@@ -671,38 +681,11 @@ predict_rf_smooth <- focal(predict_rf, w = 5, fun = modal, na.policy= 'omit')
 plot(predict_rf_smooth, col = c('#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00','#ffff33'))
 
 predict_rf <- writeRaster(predict_rf_smooth, file.path(here(), '/data/processed/PredictedVegClass-sm.tif'), overwrite = T)
+
+rm(veg_rf_model)
 ```
 
-The Random Forest classification model was predicted onto a raster surface using the package 'Terra.' This raster was then smooth using focal statistics, with a window of 5 cells, using the mode as the value to return. 
-
-```{r Compare to original stratification}
-testOriginal <- st_read('../data/processed/StratTest/TestSetStratification.shp', quiet = T) %>%
-  vect()
-
-pstrat <- '/media/sagesteppe/ExternalHD/UFO_AIM_Design_Stratification/processed/'
-original_strat <- rast(file.path(pstrat, "UFO_Strata.tif"))
-
-testOriginal <- project(testOriginal, crs(original_strat))
-outOrig <- extract(original_strat, testOriginal, method = 'simple')
-outOrig <- outOrig[complete.cases(outOrig),]
-
-post_strat <- rast(file.path(here(), '/data/processed/PredictedVegClass-sm.tif'))
-testOriginal <- project(testOriginal, crs(post_strat))
-outPost <- extract(post_strat, testOriginal, method = 'simple')
-outPost <- outPost[complete.cases(outPost),]
-
-mdsOrig <- outOrig %>%
-  group_by(ID) %>% # these are the original values. 
-  summarise(OriginalCover = Mode(BPS_CODE))
-
-mdsPost <- outPost %>% 
-  group_by(ID) %>% 
-  summarise(RestratifiedCover = Mode(lyr1))
-
-change <- inner_join(mdsOrig, mdsPost, by = 'ID')
-
-rm(testOriginal, mdsOrig, mdsPost, Mode, post_strat, outPost, outOrig, original_strat)
-```
+The Random Forest classification model was predicted onto a raster surface using the package 'Terra.' This raster was then smooth using focal statistics, with a window of 5 cells, using the mode as the value to return.
 
 # Comparison of New and Old vegetation classification models. 
 
@@ -723,7 +706,7 @@ strata_pal <- setNames(
 p <- '/media/sagesteppe/ExternalHD/UFO_AIM_Design_Stratification'
 initialGAP <- read.csv(file.path(p, 'raw', 'lookupTable.txt'))
 
-reprocessedGAP <- read.csv(file.path(p, 'processed', 'UFO_strata_areas.csv')) %>% 
+reprocessedGAP <- reprocessedGAP %>% 
   mutate(Percent = round((Cells/sum(Cells) ) *100)) %>% 
   arrange(-Percent)
 
