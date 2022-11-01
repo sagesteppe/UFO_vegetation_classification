@@ -37,6 +37,12 @@ Mode <- function(x) {
   ux <- unique(x)
   ux[which.max(tabulate(match(x, ux)))]
 }
+
+strata_pal <- setNames(
+  c('#4A5A28', '#ADB1B9', '#CEB88E', '#574039', '#B64841',
+    '#1357a6', '#1B1212', '#F9E076', '#39993A', '#00688B'),
+  c('PJ', 'SS', 'SD', 'MMS', 'AS', 'RI', 'OT', 'GR', 'PP', 'MC')
+)
 ```
 
 # Methods 
@@ -279,7 +285,7 @@ writeRaster(texture_PrincComponents, file.path(path, 'Textures_pca.tif'), overwr
 rm(texture_PrincComponents, all_textures, glcm.red, glcm.colour, texture_values, rf_veg_pca, texture_PC, files, sr)
 ```
 
-A Gray Level Co-occurrence Matrix (GLCM) was created using the 'glcm' package to create a texture raster layer to aid in classification. Texture bands are, among other properties, capable of indicating the amounts of heterogeneity of habitat types across the landscape. Texture layers were produced using both NAIP natural color and infrared imagery. Texture statistics: `r toString(paste0(stats))`, with windows of `r toString(wind[1])` in both direction, shifts in all directions (**Queen's case**), and the default value of 32 grey levels. NAIP data were processed to create an NDVI band. NDVI is well suited for identifying sparsely vegetated areas, it may be useful in distinguishing salt desert from all other strata, and help in distinguishing between MMS and PJ. 
+A Gray Level Co-occurrence Matrix (GLCM) was created using the 'glcm' package to create a texture raster layer to aid in classification. Texture bands are, among other properties, capable of indicating the amounts of heterogeneity of habitat types across the landscape. Texture layers were produced using both NAIP natural color and infrared imagery. Texture statistics: `r toString(paste0(stats))`, with windows of `r toString(wind[1])` in both direction, shifts in all directions (*Queen's case*), and the default value of 32 grey levels. NAIP data were processed to create an NDVI band. NDVI is well suited for identifying sparsely vegetated areas, it may be useful in distinguishing salt desert from all other strata, and help in distinguishing between MMS and PJ. 
 
 ```{r create NDVI band, echo = F, eval = F}
 # (NIR - Red) / (NIR + Red)
@@ -466,9 +472,9 @@ rm(reg_pts, random_pts, plot_drawn, random_drawn, reg_drawn)
 ```
 
 ```{r Import all Geographic Data and extract occurrences to points, eval = F}
-
+p <- '/media/sagesteppe/ExternalHD/plot_post_stratification'
 UFO_land <- st_read(
-  paste0(here(), '/data/processed/UFO_Allotments/', 'UFO_Allotments.shp'),
+  paste0(p, '/data/processed/UFO_Allotments/', 'UFO_Allotments.shp'),
   quiet = T) %>% 
   st_transform(4269) %>% 
   st_union() %>% 
@@ -498,14 +504,14 @@ DEM <- rast(file.path(PhysioPath,
             list.files(PhysioPath,
             pattern = "dem.*smooth.*tif$")))
 DEM <- crop(DEM,  UFO_land, mask = T)
-DEM <- resample(DEM, naip_NC, method = 'cubicspline')
+# DEM <- resample(DEM, naip_NC, method = 'cubicspline') redundant. ?
 
 slope <- rast(file.path(PhysioPath,
             list.files(PhysioPath,
             pattern = "slope*")))
 slope <- terra::project(slope,  y = DEM, method = 'cubicspline', align = T)
 slope <- crop(slope,  UFO_land, mask = T)
-slope <- resample(slope, naip_NC, method = 'cubicspline')
+# slope <- resample(slope, naip_NC, method = 'cubicspline') redundant
 
 predictors <- c(naip_NC, naip_IR, NDVI, texture, DEM, slope)
 names(predictors) <- c('NAIP_red', 'NAIP_green', 'NAIP_blue', 'NAIP_IR', 'NDVI', 
@@ -529,7 +535,7 @@ library(doParallel)
 library(randomForest)
 
 veg_pts <- project(veg_pts, crs(predictors))
-VegClass <- extract(predictors, veg_pts, method = 'simple', touches = F, fun = mean )#,
+VegClass <- extract(predictors, veg_pts, method = 'simple', touches = F, fun = mean)#,
                   #  weights = T) # note weights work on Lightscape, but not parkland. 
 VegClass <- cbind(as.data.frame(veg_pts), VegClass[,2:ncol(VegClass)])
 VegClass <- VegClass[complete.cases(VegClass),]
@@ -545,15 +551,18 @@ test <- VegClass[-split_obs,]
 # here we gather a similar number of records to test the original stratification
 # note we subset out the data which were drawn from the GAP data set. 
 
-
-test <- read.csv(file.path('../data/processed/', 'rf_testing_data.csv'))
-
-
 vp <- st_as_sf(veg_pts) %>%
   filter(Type != 'Stratified',
          VegClass %in% c('AS', 'MC', 'PJ', 'MMS', 'SD', 'SS')) %>% # only test on same vegclasses!!! 
   mutate(VegClass = as_factor(VegClass))
-second_test <- ( 1 - (nrow(test) / nrow(vp) )) * 0.9 # alot of the values in original will NaN buffet it a bit
+vp1 <- extract(predictors[[1]], vp, method = 'simple', fun = sum) 
+vp1 <- vp1[complete.cases(vp1),] # ensure the regular plots are located in blm area for equal samples
+
+vp <- rownames_to_column(vp, 'extractID') %>% 
+  mutate(extractID = as.numeric(extractID)) %>% 
+  right_join(., vp1, by = c('extractID' = 'ID'))
+
+second_test <- ( 1 - (nrow(test) / nrow(vp) )) # select the same number of records
 split_obs_strat <- createDataPartition(vp$VegClass,
                                  p = second_test, # percentage of data as training
                                  list = FALSE)
@@ -562,9 +571,9 @@ testOriginal <- vp[-split_obs_strat,]
 mainDir <- '../data/processed/'
 subDir <- 'StratTest'
 
-# here we create the 
+# here we write these data out.
 ifelse(!dir.exists(file.path(mainDir, subDir)), dir.create(file.path(mainDir, subDir)), FALSE)
-st_write(testOriginal, file.path(mainDir, subDir, 'TestSetStratification.shp'), quiet = T)
+# st_write(testOriginal, file.path(mainDir, subDir, 'TestSetStratification.shp'), quiet = T)
 # write.csv(test, file.path(mainDir, 'rf_testing_data.csv'), row.names  = F)
 
 rm(VegClass, split_obs, testOriginal, vp, mainDir, subDir, testOriginal, split_obs_strat)
@@ -597,19 +606,17 @@ veg_rf_model <- readRDS(file = file.path(prds, 'RandomForest2022-10-31.rds'))
 test <- read.csv(file.path('../data/processed/', 'rf_testing_data.csv'))
 test$class <- as.factor(test$class)
 
-data.frame(randomForest::importance(veg_rf_model, type = 2)) %>% 
-  rownames_to_column('Variable') %>% 
-  arrange(-MeanDecreaseGini) %>% 
-  knitr::kable( col.names = c('Variable', 'Importance'),  align = "l", digits = 3,
-                caption = "Variable Importance in Random Forest Model")
+data.frame(randomForest::importance(veg_rf_model, type = 2))# %>% 
+#  rownames_to_column('Variable') %>% 
+#  arrange(-MeanDecreaseGini) %>% # these results are to in the weeds
+#  knitr::kable( col.names = c('Variable', 'Importance'),  align = "l", digits = 3,
+#                caption = "Variable Importance in Random Forest Model")
 
 # plot(veg_rf_model) # beyond the scope of the write-up
 # generate a confusion matrix to determine accuracy on real data
 
 test_prediction <- predict(veg_rf_model, test)
 cmRestrat <- caret::confusionMatrix(test_prediction, test$class)
-
-knitr::kable(cmRestrat$table, caption = 'Confusion matrix for RF model')
 
 rm(test_prediction, train_prop, test, prds)
 ```
@@ -623,7 +630,7 @@ gap <- rast('/media/sagesteppe/ExternalHD/UFO_AIM_Design_Stratification/processe
 
 pts2test <- project(pts2test, crs(gap))
 reprocessedGAP <- read.csv(file.path(p, 'processed', 'UFO_strata_areas.csv')) %>% 
-  select(RasterValue, Code)
+  select(RasterValue, Code, Cells)
 factor_lvls <- c("AS", "MC", "MMS", "PJ", "SD", "SS", "RI", "OT", "GR", "PP" )
 
 a <- extract(gap, pts2test, method = 'simple', touches = F)
@@ -644,28 +651,62 @@ mdsOrig <- a %>%
 
 cmOrig <- caret::confusionMatrix(mdsOrig$True, mdsOrig$Original)
 
-rm(pts2test, factor_lvls, a, mdsOrig, gap)
+rm(factor_lvls, a, mdsOrig, gap)
 ```
 
-```{r plot confusion matrices, warning = F}
+```{r plot Results side by side, warning = F, fig.height=3.5, fig.width=3.5, fig.cap= "Three dimensional scatter-plot showing the relationship between three common metrics for evaluating the predictions of models. Circles represent the performance of the original stratification, and diamonds the new classification. Positions towards the upper right corner indicate more desirable qualities."}
 
+RestratDiagnostics <- data.frame(
+  'Version' = rep('Original', length(rownames(cmRestrat[[4]]))),
+  'Class' = gsub('Class: ', '', rownames(cmRestrat[[4]])),
+  'Specificity' = cmRestrat[[4]][, grep('Specificity', colnames(cmRestrat[[4]])) ] ,
+  'Sensitivity' = cmRestrat[[4]][, grep('Sens', colnames(cmRestrat[[4]])) ],
+  'Accuracy' = cmRestrat[[4]][, grep('Bala', colnames(cmRestrat[[4]])) ]
+)
 
-knitr::kable(cmRestrat$table, caption = 'Confusion matrix for RF model')
+OrigDiagnostics <- data.frame(
+  'Version' = rep('Restratified', length(rownames(cmOrig[[4]]))),
+  'Class' = gsub('Class: ', '', rownames(cmOrig[[4]])),
+  'Specificity' = cmOrig[[4]][, grep('Specificity', colnames(cmOrig[[4]])) ] ,
+  'Sensitivity' = cmOrig[[4]][, grep('Sens', colnames(cmOrig[[4]])) ],
+  'Accuracy' = cmOrig[[4]][, grep('Bala', colnames(cmOrig[[4]])) ]
+)
 
-cmOrig
+OrigDiagnostics <- filter(OrigDiagnostics, Class %in% RestratDiagnostics$Class)
+
+dg <- bind_rows(RestratDiagnostics, OrigDiagnostics) %>% 
+  filter(!Class %in% c('AS', 'MC')) %>% 
+  mutate(Version = as_factor(Version))
+
+strata_pal2 <- c(strata_pal, strata_pal)
+strata_pal2 <- strata_pal2[match(dg$Class, names(strata_pal2))]
+strata_pal2 <- strata_pal2[1:nrow(dg)]
+
+shapes = c(18, 20)
+shapes <- shapes[as.numeric(dg$Version)]
+
+par(mar = c(2.1, 4.1, 2.1, 2.1))
+scatterplot3d::scatterplot3d(z = dg$Specificity, y = dg$Sensitivity, x = dg$Accuracy, type="h",
+              pch = shapes, color = strata_pal2, cex.symbols = 2, box = F,las=1,
+              zlab = 'Specificity', ylab = 'Sensitivity', xlab = 'Balanced Accuracy', 
+              zlim  = c(0.5, 1), xlim  = c(0.5, 1), angle = 45,
+              main="Relationships between diagnostic\nmetrics for vegetation types")
+
+rm(OrigDiagnostics, RestratDiagnostics, shapes, strata_pal2, dg)
 ```
 
 
-While the accuracy for the model was `r toString(round(cm1[["overall"]][["Accuracy"]],3))` (range `r toString(round(cm1[["overall"]][["AccuracyLower"]],2))` - `r toString(round(cm1[["overall"]][["AccuracyUpper"]], 2))` 95 % confidence interval), due to an imbalance in the number of observations per group a more appropriate for evaluating the overall performance of the model, is the Kappa metric, `r toString(round(cm1[["overall"]][["Kappa"]], 3))`.
+While the accuracy for the model was `r toString(round(cmRestrat[["overall"]][["Accuracy"]],3))` (range `r toString(round(cmRestrat[["overall"]][["AccuracyLower"]],2))` - `r toString(round(cmRestrat[["overall"]][["AccuracyUpper"]], 2))` 95 % confidence interval), due to an imbalance in the number of observations per group a more appropriate for evaluating the overall performance of the model, is the Kappa metric, `r toString(round(cmRestrat[["overall"]][["Kappa"]], 3))`.
 
-Notably, the model has high rates of Specificity (median = `r toString(round(median(cm1[[4]][, grep('Spec', colnames(cm1[[4]]))]), 2))`), showing that when it predicts a vegetation type onto a pixel cell, the prediction is usually correct; less so for prediction of Pinon-Juniper (`r toString(round(cm1[[4]][grep('PJ', rownames(cm1[['byClass']]) ,'MMS') , grep('Spec', colnames(cm1[[4]])) ], 3))`). However, the model suffers from low Sensitivity, indicating that it is unable to detect all occurrences of a vegetation type. For example, the model is only able to appropriately classify half of the occurrences of Sage Steppe (`r toString(round(cm1[[4]][grep('SS', rownames(cm1[['byClass']]) ,'MMS') , grep('Sens', colnames(cm1[[4]])) ], 3))`
-) and Mixed Mountain Shrub (`r toString(round(cm1[[4]][grep('MMS', rownames(cm1[['byClass']]) ,'MMS') , grep('Sens', colnames(cm1[[4]])) ], 3))`). Accordingly this model is susceptible to over-predicting the occurrence of Pinyon-Juniper, at the expense of Mixed Mountain Shrub and Sagesteppe. This is to be expected given the sample imbalance, which contained many more plots PJ than other types. However numerous trials of reducing the number of Pinyon-Juniper plots did not significantly increase the quality of predictions. Further indicating, that the features used are not adequate for distinguishing between the transitional points enough Pinons and Junipers are present where Sagesteppe phases into Pinyon-Juniper, and where shrubs increase in Pinyon-Juniper and it phases into Mixed-Mountain Shrub. 
+Notably, the model has high rates of Specificity (median = `r toString(round(median(cmRestrat[[4]][3:6, grep('Spec', colnames(cmRestrat[[4]]))]), 2))`, less Aspen and Mixed-Conifer), showing that when it predicts a vegetation type onto a pixel cell, the prediction is usually correct; less so for prediction of Pinon-Juniper (`r toString(round(cmRestrat[[4]][grep('PJ', rownames(cmRestrat[['byClass']])) , grep('Spec', colnames(cmRestrat[[4]])) ], 3))`). However, the model suffers from low Sensitivity (median = `r toString(round(median(cmRestrat[[4]][3:6, grep('Sens', colnames(cmRestrat[[4]]))]), 2))`, less AS and MC), indicating that it is unable to detect all occurrences of a vegetation type. For example, the model is only able to appropriately classify half of the occurrences of Sage Steppe (`r toString(round(cmRestrat[[4]][grep('SS', rownames(cmRestrat[['byClass']])) , grep('Sens', colnames(cmRestrat[[4]])) ], 3))`
+) and Mixed Mountain Shrub (`r toString(round(cmRestrat[[4]][grep('MMS', rownames(cmRestrat[['byClass']]) ,'MMS') , grep('Sens', colnames(cmRestrat[[4]])) ], 3))`). Accordingly this model is susceptible to over-predicting the occurrence of Pinyon-Juniper, at the expense of Mixed Mountain Shrub and Sagesteppe. This is to be expected given the sample imbalance, which contained many more plots PJ than other types. However numerous trials of reducing the number of Pinyon-Juniper plots did not significantly increase the quality of predictions. Further indicating, that the features used are not adequate for distinguishing between the transitional points enough Pinons and Junipers are present where Sagesteppe phases into Pinyon-Juniper, and where shrubs increase in Pinyon-Juniper and it phases into Mixed-Mountain Shrub. While we believe this may be readily accomplished, given the objectives and goals of this process, we believe these are out of the current scope. 
 
-Compared to the original model.... *remember evaluation of the original model is same Sample size as evaluation of post-strat HOWEVER it is drawn only from the random and regular points to be independent of the AIM points drawn from it*
+In order to determine the relative performance of our model to the original GAP classification a confusion matrix was also generated. A similar number of test points, `r toString(nrow(pts2test))`, were used. These points were only selected from the computer generated points in order to be independent of the data product, which the AIM plots were derived from. Several metrics indicate the original model is less accurate than the second model. The accuracy of the model was `r toString(round(cmOrig[["overall"]][["Accuracy"]],3))` (range `r toString(round(cmOrig[["overall"]][["AccuracyLower"]],2))` - `r toString(round(cmOrig[["overall"]][["AccuracyUpper"]], 2))` 95 % confidence interval), a difference of roughly `r toString(round(cmRestrat[["overall"]][["Accuracy"]] - cmOrig[["overall"]][["Accuracy"]],2))`. This test data set was also unbalanced and it's kappa, `r toString(round(cmOrig[["overall"]][["Kappa"]], 3))`, serves as a better predictor or overall model performance in this case, a difference of roughly `r toString(round(cmRestrat[["overall"]][["Kappa"]] - cmOrig[["overall"]][["Kappa"]], 2))`. Considering only the four major vegetation classes also present in the re-stratified model the original has similar rates of specificity (median = `r toString(round(median(cmOrig[[4]][3:6, grep('Spec', colnames(cmOrig[[4]]))]), 2))`, less AS and MC), but similar to the re stratified model but has lower rates of sensitivity (median = `r toString(round(median(cmOrig[[4]][3:6, grep('Sens', colnames(cmOrig[[4]]))]), 2))`, less AS and MC). 
 
-```{r remove tree parameters, echo = F, warning = F}
-rm(mTry, nTT, I, sF)
+On the whole the new model outperforms the older model in all comparisons except for that the sensitivity of the original PJ classification is slightly higher than that of the secondary PJ classification (`r toString(round(cmOrig[[4]][grep('PJ', rownames(cmOrig[['byClass']])) , grep('Sens', colnames(cmOrig[[4]])) ], 3))` to `r toString(round(cmRestrat[[4]][grep('PJ', rownames(cmRestrat[['byClass']])) , grep('Sens', colnames(cmRestrat[[4]])) ], 3))`), SEE FIGURE X. In general their are multiple trade offs in the comparison of models, however the new model is both likely to correctly identify a the strata of a location, and to identify it correctly. 
 
+```{r remove writing parameters, echo = F, warning = F}
+rm(mTry, nTT, I, sF, pts2test)
 ```
 
 ```{r Predict random forest onto raster and smooth it, eval = F}
@@ -685,21 +726,13 @@ predict_rf <- writeRaster(predict_rf_smooth, file.path(here(), '/data/processed/
 rm(veg_rf_model)
 ```
 
-The Random Forest classification model was predicted onto a raster surface using the package 'Terra.' This raster was then smooth using focal statistics, with a window of 5 cells, using the mode as the value to return.
+# Comparison of Field Office Between Old and New Vegetation Models 
 
-# Comparison of New and Old vegetation classification models. 
-
-```{r make waffle charts of changes in vegetation, echo = F,  fig.height = 8, fig.width = 3, fig.cap = "Changes in Predicted Land Cover", out.width= "50%", out.extra='style="float:left; padding:10px"'}
+```{r make waffle charts of changes in vegetation, echo = F,  fig.height = 7, fig.width = 3, fig.cap = "Changes in Predicted Land Cover", out.width= "50%", out.extra='style="float:left; padding:10px"'}
 
 library(waffle)
 library(tidyverse)
 library(cowplot)
-
-strata_pal <- setNames(
-  c('#4A5A28', '#ADB1B9', '#CEB88E', '#574039', '#B64841',
-    '#1357a6', '#1B1212', '#F9E076', '#39993A', '#00688B'),
-  c('PJ', 'SS', 'SD', 'MMS', 'AS', 'RI', 'OT', 'GR', 'PP', 'MC')
-)
 
 # original land cover of sample design
 
@@ -723,7 +756,7 @@ strata_waffle <- ggplot(reprocessedGAP, aes(fill = Code, values = Percent)) +
   guides(fill=guide_legend(ncol=2)) +
   theme(plot.title = element_text(hjust = 0.5), 
         legend.title.align = 0.5,
-        plot.margin = unit(c(0.25,0.25,0.25,0.25), "cm"))
+        plot.margin = unit(c(0.0,0.0,0.0,0.0), "lines"))
 
 legend <- get_legend(strata_waffle)
 strata_waffle <- strata_waffle + theme(legend.position='none')
@@ -753,7 +786,7 @@ random_waffle <- ggplot(veg_pts, aes(fill = VegClass, values = Percent)) +
   theme(legend.position="none") +
   labs(title = 'human classification')  +
   theme(plot.title = element_text(hjust = 0.5),
-        plot.margin = unit(c(0.25,0.25,0.25,0.25), "cm"))
+        plot.margin = unit(c(0.0,0.0,0.0,0.0), "lines"))
 
 #  a waffle of what percent habitats exist in UFO based on reclassification
 
@@ -787,13 +820,13 @@ reclass_waffle <- ggplot(vegclass, aes(fill = Stratum, values = Percent)) +
   coord_equal() + 
   theme_void() + 
   theme(legend.position="none") + 
-  labs(title = 're-modelled classification')  +
+  labs(title = 're-modeled classification')  +
   theme(plot.title = element_text(hjust = 0.5),
-        plot.margin = unit(c(0.25,0.25,0.25,0.25), "cm"))
+        plot.margin = unit(c(0.0,0.0,0.0,0.0), "lines"))
 
 plot_col <- plot_grid(strata_waffle, random_waffle,
-                      reclass_waffle, legend, ncol = 1, rel_widths = c(1,1,1,0.75),
-                      rel_heights = c(1,1,1,0.75))
+                      reclass_waffle, legend, ncol = 1, rel_widths = c(1,1,1,1),
+                      rel_heights = c(1,1,1,1))
 
 title <- ggdraw() + 
   draw_label(
@@ -801,7 +834,8 @@ title <- ggdraw() +
     fontface = 'bold',
     x = 0,
     hjust = 0
-  ) + theme(plot.margin = ggplot2::margin(0, 0, 0, 1.5,  "cm"))
+  ) + 
+  theme(plot.margin = ggplot2::margin(unit(c(0.0,0.0,0.0,15), "lines")))
 
 plot_grid(
   title, plot_col,
@@ -813,20 +847,7 @@ plot_grid(
 rm(strata_pal2, strata_pal3, random_waffle, reclass_waffle, legend, plot_col)
 ```
 
-a ton of test words that should wrap right.... seem like needs more work 
- 
-this town 
-is coming
- 
-like a ghost
- 
-town 
- 
-bands wont
-play no more
-too much fighting
-on the dance floor
-
+Both the total area of each vegetation type, stratum, and the number of plots per stratum influence the statistical conclusions which can be drawn in these areas. An increase in the surface area of a stratum, without an increase in the number of plots would decrease the statistical confidence associated with conclusions from it. However, if the weights of point drops were equivalent in all study areas
 
 ```{r compare values between rasters to create flow chart, eval = F}
 # first match the resolutions of these products, we will resample the coarser original
@@ -886,7 +907,7 @@ par(mar = c(1.5, 1.5, 4.1, 1.5))
 circos.par(start.degree = 0)
 chordDiagram(rvals, transparency = 0.5, directional = 1, 
              grid.col = all_pals, diffHeight  = -0.04, big.gap = 10)
-abline(h = 0, lty = 2, col = "#00000080")
+abline(h = 0, lty = 2, col = "#000000")
 title("Movement of Pixels from stratification\n(bottom) to post stratification (top)")
 circos.clear()
 ```
