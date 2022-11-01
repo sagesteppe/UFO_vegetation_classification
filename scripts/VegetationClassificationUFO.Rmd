@@ -21,6 +21,7 @@ In order to resolve these issues with the analysis of the AIM 2017-2022 sample d
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = F)
+knitr::opts_chunk$set(dpi = 300) 
 knitr::opts_chunk$set(message = "hide")
 knitr::opts_chunk$set(warning = "hide")
 ```
@@ -599,14 +600,14 @@ rm(cl, train, opt_mtry)
 
 The number of mtry in the random forest model were tuned using the function 'tuneRF' with the number of try's set to `r toString(nTT)`, a step factor of `r toString(sF)` and a relative minimum improvement in Out of Bag (OOB) error rate set at `r toString(I)`. The random forest model was then trained using `r toString(mTry)` mtry and `r toString(nTT)` trees, all using the RandomForest package. 
 
-```{r Random Forest Results, echo = F, warning = F, message = F}
+```{r Random Forest Results, echo = F, warning = F, message = F, results = 'hide'}
 
 prds <- '/media/sagesteppe/ExternalHD/plot_post_stratification/results/stats'
 veg_rf_model <- readRDS(file = file.path(prds, 'RandomForest2022-10-31.rds'))
 test <- read.csv(file.path('../data/processed/', 'rf_testing_data.csv'))
 test$class <- as.factor(test$class)
 
-data.frame(randomForest::importance(veg_rf_model, type = 2))# %>% 
+data.frame(randomForest::importance(veg_rf_model, type = 2))# %>% # modifies in place!!! OOP :-)
 #  rownames_to_column('Variable') %>% 
 #  arrange(-MeanDecreaseGini) %>% # these results are to in the weeds
 #  knitr::kable( col.names = c('Variable', 'Importance'),  align = "l", digits = 3,
@@ -654,7 +655,7 @@ cmOrig <- caret::confusionMatrix(mdsOrig$True, mdsOrig$Original)
 rm(factor_lvls, a, mdsOrig, gap)
 ```
 
-```{r plot Results side by side, warning = F, fig.height=3.5, fig.width=3.5, fig.cap= "Three dimensional scatter-plot showing the relationship between three common metrics for evaluating the predictions of models. Circles represent the performance of the original stratification, and diamonds the new classification. Positions towards the upper right corner indicate more desirable qualities."}
+```{r plot Results side by side, warning = F, fig.height = 3.75, fig.width = 3.75, fig.cap = "Three dimensional scatter-plot showing the relationship between three common metrics for evaluating the predictions of models. Circles represent the performance of the original stratification, and diamonds the new classification. Positions towards the upper right corner indicate more desirable qualities."}
 
 RestratDiagnostics <- data.frame(
   'Version' = rep('Original', length(rownames(cmRestrat[[4]]))),
@@ -685,7 +686,7 @@ strata_pal2 <- strata_pal2[1:nrow(dg)]
 shapes = c(18, 20)
 shapes <- shapes[as.numeric(dg$Version)]
 
-par(mar = c(2.1, 4.1, 2.1, 2.1))
+par(mar = c(2.1, 3.1, 2.1, 2.1))
 scatterplot3d::scatterplot3d(z = dg$Specificity, y = dg$Sensitivity, x = dg$Accuracy, type="h",
               pch = shapes, color = strata_pal2, cex.symbols = 2, box = F,las=1,
               zlab = 'Specificity', ylab = 'Sensitivity', xlab = 'Balanced Accuracy', 
@@ -703,7 +704,7 @@ Notably, the model has high rates of Specificity (median = `r toString(round(med
 
 In order to determine the relative performance of our model to the original GAP classification a confusion matrix was also generated. A similar number of test points, `r toString(nrow(pts2test))`, were used. These points were only selected from the computer generated points in order to be independent of the data product, which the AIM plots were derived from. Several metrics indicate the original model is less accurate than the second model. The accuracy of the model was `r toString(round(cmOrig[["overall"]][["Accuracy"]],3))` (range `r toString(round(cmOrig[["overall"]][["AccuracyLower"]],2))` - `r toString(round(cmOrig[["overall"]][["AccuracyUpper"]], 2))` 95 % confidence interval), a difference of roughly `r toString(round(cmRestrat[["overall"]][["Accuracy"]] - cmOrig[["overall"]][["Accuracy"]],2))`. This test data set was also unbalanced and it's kappa, `r toString(round(cmOrig[["overall"]][["Kappa"]], 3))`, serves as a better predictor or overall model performance in this case, a difference of roughly `r toString(round(cmRestrat[["overall"]][["Kappa"]] - cmOrig[["overall"]][["Kappa"]], 2))`. Considering only the four major vegetation classes also present in the re-stratified model the original has similar rates of specificity (median = `r toString(round(median(cmOrig[[4]][3:6, grep('Spec', colnames(cmOrig[[4]]))]), 2))`, less AS and MC), but similar to the re stratified model but has lower rates of sensitivity (median = `r toString(round(median(cmOrig[[4]][3:6, grep('Sens', colnames(cmOrig[[4]]))]), 2))`, less AS and MC). 
 
-On the whole the new model outperforms the older model in all comparisons except for that the sensitivity of the original PJ classification is slightly higher than that of the secondary PJ classification (`r toString(round(cmOrig[[4]][grep('PJ', rownames(cmOrig[['byClass']])) , grep('Sens', colnames(cmOrig[[4]])) ], 3))` to `r toString(round(cmRestrat[[4]][grep('PJ', rownames(cmRestrat[['byClass']])) , grep('Sens', colnames(cmRestrat[[4]])) ], 3))`), SEE FIGURE X. In general their are multiple trade offs in the comparison of models, however the new model is both likely to correctly identify a the strata of a location, and to identify it correctly. 
+On the whole the new model outperforms the older model in all comparisons except for that the sensitivity of the original PJ classification is higher than that of the secondary PJ classification (`r toString(round(cmOrig[[4]][grep('PJ', rownames(cmOrig[['byClass']])) , grep('Sens', colnames(cmOrig[[4]])) ], 3))` to `r toString(round(cmRestrat[[4]][grep('PJ', rownames(cmRestrat[['byClass']])) , grep('Sens', colnames(cmRestrat[[4]])) ], 3))`), SEE FIGURE X. In general their are multiple trade offs in the comparison of models, however the new model is both likely to correctly identify a the strata of a location, and to identify it correctly. 
 
 ```{r remove writing parameters, echo = F, warning = F}
 rm(mTry, nTT, I, sF, pts2test)
@@ -829,20 +830,14 @@ plot_col <- plot_grid(strata_waffle, random_waffle,
                       rel_heights = c(1,1,1,1))
 
 title <- ggdraw() + 
-  draw_label(
-    "Percent Land Cover",
-    fontface = 'bold',
-    x = 0,
-    hjust = 0
-  ) + 
-  theme(plot.margin = ggplot2::margin(unit(c(0.0,0.0,0.0,15), "lines")))
+  draw_label("Percent Land Cover",
+    fontface = 'bold', x = 0,  hjust = 0 ) + 
+  theme(plot.margin = ggplot2::margin(unit(c(0.0,0.0,0.0,50), "lines")))
 
 plot_grid(
   title, plot_col,
   ncol = 1,
-  # rel_heights values control vertical title margins
-  rel_heights = c(0.1, 1) 
-)
+  rel_heights = c(0.05, 1) )
 
 rm(strata_pal2, strata_pal3, random_waffle, reclass_waffle, legend, plot_col)
 ```
@@ -882,6 +877,7 @@ rm(d, original_strat, reclassified)
 ```{r reimport data for showing flow from veg classes, echo = F, fig.cap= "Depiction of how raster cells in the UFO are redistributed from the original sample design (lower half), to the the reclassified spatial product for the sample design (upper half)", fig.height = 6, fig.width = 6}
 
 shhh(library(circlize))
+
 p1 <- '/media/sagesteppe/ExternalHD/plot_post_stratification/data/processed'
 rvals <- read.csv(file.path(p1, 'Extracted_raster_values.csv'))
 area <- read.csv(file.path(p1, 'Count_OriginalStrat_raster_values.csv'))
@@ -900,9 +896,8 @@ sp2 <- strata_pal # create a palette to mark the colors in both ends
 names(sp2) <- paste0('to', names(strata_pal))
 all_pals<- c(strata_pal, sp2)
 
-#circos.par(gap.after = c("AS" = 5, "GR" = 5, "MC" = 5, "MMS" = 5, "OT" = 5, 
-#                          "PJ" = 1, "PP" = 5,  "RI" = 5,  "SS" = 0,  "SD" = 0, 
-#                         "toAS" = 5, "toMC" = 5, "toMMS" = 0, "toPJ" = 0, "toSD" = 0, "toSS" = 5))
+# let us consider removing the labels, and adding a legend for the colors instead. 
+
 par(mar = c(1.5, 1.5, 4.1, 1.5))
 circos.par(start.degree = 0)
 chordDiagram(rvals, transparency = 0.5, directional = 1, 
@@ -920,6 +915,5 @@ The initial AIM sample design was based upon a stratification which included `r`
 c("terra", "glcm", "RStoolbox", "randomForest", "caret", "parallel", "doParallel") %>%
   map(citation) %>%
   print(style = "text")
-
 ```
 
