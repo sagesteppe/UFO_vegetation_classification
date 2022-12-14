@@ -5,6 +5,7 @@ date: NULL
 output:
   pdf_document: default
   word_document: default
+always_allow_html: yes
 csl: ../citations/citations/apa.csl
 bibliography: ../citations/citations/citations.bib
 link-citations: yes
@@ -290,7 +291,7 @@ writeRaster(texture_PrincComponents, file.path(path, 'Textures_pca.tif'), overwr
 rm(texture_PrincComponents, all_textures, glcm.red, glcm.colour, texture_values, rf_veg_pca, texture_PC, files, sr)
 ```
 
-A Gray Level Co-occurrence Matrix (GLCM) was created using the 'glcm' package to create a texture raster layer to aid in classification. Texture bands are, among other properties, capable of indicating the amounts of heterogeneity of habitat types across the landscape. Texture layers were produced using both NAIP natural color and infrared imagery. Texture statistics: `r toString(paste0(stats))`, with windows of `r toString(wind[1])` in both direction, shifts in all directions (i.e. *Queen's case*), and the default value of 32 grey levels. NAIP data were processed to create an Normalized Difference Vegetation Index (NDVI) band.
+A Gray Level Co-occurrence Matrix (GLCM) was created using the 'glcm' package to create a texture raster layer to aid in classification (@glcm). Texture bands are, among other properties, capable of indicating the amounts of heterogeneity of habitat types across the landscape. Texture layers were produced using both NAIP natural color and infrared imagery. Texture statistics: `r toString(paste0(stats))`, with windows of `r toString(wind[1])` in both direction, shifts in all directions (i.e. *Queen's case*), and the default value of 32 grey levels. NAIP data were processed to create an Normalized Difference Vegetation Index (NDVI) band.
 $$ NDVI = (NearIR - Red) / (NearIR + Red) $$
 NDVI is well suited for identifying sparsely vegetated areas, it was useful in distinguishing salt desert from all other strata, and help in distinguishing between MMS and PJ. 
 
@@ -600,7 +601,7 @@ classes <- train %>%
 test <- read.csv(file.path('../data/processed/', 'rf_testing_data.csv'))
 ```
 
-To develop a random forest model, the data set of `r toString(nrow(veg_pts))` classified points were partitioned using a split of `r toString(train_prop)`:`r toString(1-train_prop)` for the training and testing sets (n = `r toString(nrow(train))`, n = `r toString(nrow(test))`) using 'caret'. The data set was not balanced (number of plots per stratum:  `r toString(classes)`) due to the natural varying presence of these vegetation types in the study area.
+To develop a random forest model, the data set of `r toString(nrow(veg_pts))` classified points were partitioned using a split of `r toString(train_prop)`:`r toString(1-train_prop)` for the training and testing sets (n = `r toString(nrow(train))`, n = `r toString(nrow(test))`) using 'caret' (@Caret). The data set was not balanced (number of plots per stratum:  `r toString(classes)`) due to the natural varying presence of these vegetation types in the study area.
 
 ```{r Fit Random Forest Model}
 
@@ -616,9 +617,11 @@ stopCluster(cl); remove(cl)
 saveRDS(veg_rf_model, file = paste0('../results/stats/RandomForest', Sys.Date(), '.rds'))
 
 rm(cl, train, opt_mtry)
+
+citation('parallel')
 ```
 
-The number of mtry in the random forest model were tuned using the function 'tuneRF' with the number of try's set to `r toString(nTT)`, a step factor of `r toString(sF)` and a relative minimum improvement in Out of Bag (OOB) error rate set at `r toString(I)`. The random forest model was then trained using `r toString(mTry)` mtry and `r toString(nTT)` trees, all using the RandomForest package. 
+The number of mtry in the random forest model were tuned using the function 'tuneRF' with the number of try's set to `r toString(nTT)`, a step factor of `r toString(sF)` and a relative minimum improvement in Out of Bag (OOB) error rate set at `r toString(I)`. The random forest model was then trained using `r toString(mTry)` mtry and `r toString(nTT)` trees, all using the RandomForest package with parellel processing (@randomForest, @parallel, @doParallel). 
 
 ```{r Random Forest Results, results = 'hide', eval = T}
 
@@ -748,7 +751,7 @@ rm(veg_rf_model)
 
 # Comparison of Field Office Between Old and New Vegetation Models 
 
-```{r make waffle charts of changes in vegetation, eval = T,  echo = F,  fig.height = 7, fig.width = 3, fig.cap = "Changes in Predicted Land Cover", out.width= "50%", out.extra='style="float:left; padding:10px"'}
+```{r make waffle charts of changes in vegetation, eval = T,  echo = F,  fig.height = 7, fig.width = 3, fig.cap = "Changes in Predicted Land Cover", out.width= "50%"}
 
 library(waffle)
 library(tidyverse)
@@ -934,7 +937,7 @@ title("Movement of Pixels from stratification\n(bottom) to post stratification (
 circos.clear()
 ```
 
-The initial AIM sample design was based upon a stratification which included `r` communities. This design was based on a manual reclassification of the GAP/LANDFIRE National Terrestrial Ecosystems 2011 data set. 
+The initial AIM sample design was based upon a stratification which included communities. This design was based on a manual reclassification of the GAP/LANDFIRE National Terrestrial Ecosystems 2011 data set. 
 
 # References
 
