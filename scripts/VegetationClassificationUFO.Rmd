@@ -1,10 +1,13 @@
 ---
 title: "Vegetation_Classification"
-author: "steppe"
-date: "2022-10-03"
+author: NULL
+date: NULL
 output:
+  pdf_document: default
   word_document: default
-  html_document: default
+csl: ../citations/citations/apa.csl
+bibliography: ../citations/citations/citations.bib
+link-citations: yes
 ---
 
 The initial AIM sample design for a field office utilized stratified random sampling within classified vegetation types which the plots could make inference to. The vegetation types were composed of alliances and communities from the GAP-Landfire National Terrestrial Ecosystems spatial data set (PUBLISHER 2011). Alliances and communities were aggregated, by an expert at each field office, to form broader vegetation groups in order for them to have more samples per unit area.
@@ -20,13 +23,14 @@ A final problem is associated with the need to classify bodies of water. Our fie
 In order to resolve these issues with the analysis of the AIM 2017-2022 sample design, we reclassify the field office into four major, and one very minor, vegetation groups which may accommodate a major swath of the lands in the field office to make inference too. To accomplish this we use over 1600 random points across the entire extent of the field office, classified in Google Earth, National Aerial Imagery Program (NAIP) aerial imagery and a couple simple spatial data products, as inputs to a simple random forest model which is projected onto the aerial extent of the field office. 
 
 ```{r setup, include=FALSE}
+knitr::opts_chunk$set(eval = F)
 knitr::opts_chunk$set(echo = F)
 knitr::opts_chunk$set(dpi = 300) 
 knitr::opts_chunk$set(message = "hide")
 knitr::opts_chunk$set(warning = "hide")
 ```
 
-```{r Load Libraries, message = F ,warning = F}
+```{r Load Libraries, eval = T}
 shhh <- suppressPackageStartupMessages
 shhh(library(tidyverse))
 shhh(library(terra))
@@ -48,7 +52,7 @@ strata_pal <- setNames(
 
 # Methods 
 
-```{r Import and Subset AIM, echo = F, eval = F}
+```{r Import and Subset AIM}
 
 UFO_buffered <- st_read(
   paste0(here(), '/data/raw/BLM_CO_Administrative_Units/', 'admu_ofc_poly.shp'),
@@ -101,7 +105,7 @@ done
 
 ```
 
-```{r NAIP imagery processing, echo = F, eval = F}
+```{r NAIP imagery processing}
 
 # the first step is to verify that we have all relevant NAIP datasets - i.e. 
 # those which intersect the land owernship of the office
@@ -182,7 +186,7 @@ rm(naip_imagery_collection_IR, naip_imagery_collection_NC, naip_imagery_IR, naip
 ```
 
 
-```{r Import processed NAIP imagery and resample to other products, echo = F, eval = F}
+```{r Import processed NAIP imagery and resample to other products}
 path <- '/media/sagesteppe/ExternalHD/NAIP/processed'
 files <- list.files(path)
 
@@ -204,13 +208,13 @@ naip_NC <- resample(naip_NC, dem, method = 'cubicspline', threads = 20,
                     filename = file.path(path, 'NC_naip_resamp.tif'))
 ```
 
-```{r settings for texture band creation}
+```{r settings for texture band creation, eval = T}
 stats <- c("mean", "variance", 'homogeneity', 'contrast', 'dissimilarity')
 wind <- c(5, 5)
 ```
 
 
-```{r Create Texture Raster band, echo = F, eval = F}
+```{r Create Texture Raster band, eval = F}
 
 library(factoextra)
 library(FactoMineR)
@@ -290,7 +294,7 @@ A Gray Level Co-occurrence Matrix (GLCM) was created using the 'glcm' package to
 $$ NDVI = (NearIR - Red) / (NearIR + Red) $$
 NDVI is well suited for identifying sparsely vegetated areas, it was useful in distinguishing salt desert from all other strata, and help in distinguishing between MMS and PJ. 
 
-```{r create NDVI band, echo = F, eval = F}
+```{r create NDVI band}
 # (NIR - Red) / (NIR + Red)
 
 naip_NC <- rast(naip_NC_r)
@@ -303,7 +307,7 @@ plot(naip_ndvi) # see the green up at the boundaries with forest service.
 writeRaster(naip_ndvi, file.path(path, 'NDVI.tif'), overwrite = T)
 ```
 
-```{r Export Points for Manual Classification in Google Earth, echo = F, eval = F}
+```{r Export Points for Manual Classification in Google Earth}
 
 rndm_VegPts <- st_read(
   file.path(here(), '/data/processed/UFO_Allotments/', 'UFO_Allotments.shp'),
@@ -403,7 +407,7 @@ rm(rndm_VegPts, rndm_VegPts2, aim2022)
 ```
 
 
-```{r Read in classified points from GE and AIM, echo = F, warning = F, message = F}
+```{r Read in classified points from GE and AIM, eval = T}
 random <- file.path('../data/processed/',
   list.files('../data/processed/',  pattern = '*Random*'))
 reg <- file.path('../data/processed/',
@@ -431,7 +435,7 @@ rm(random, twenty22, historicVeg)
 
 To create data set for training a random forest model, all `r toString(plot_drawn)` sampled AIM and LMF points LMF points, from 2018-2022, as well as all drawn 2022 AIM points, were exported to Google Earth and `r toString(nrow(plot_class))` were classified. `r toString(nrow(random_drawn))` random points were generated across the field office and `r toString(nrow(random_pts))` classified in Google Earth via the vegetation ecologist which lead the AIM sampling in 2022. An additional `r toString(nrow(reg_drawn))` regularly placed plots were drawn across the extent of the field office and `r toString(nrow(reg_pts))` were classified. Unclassified computer generated points were generally those that fell upon a wide road, or were outside BLM Ownership. Unclassified AIM/LMF points were LMF points which must have represented the re-visitation of a single plot, under distinct record elements in the TerraDat database. In all instances points were buffered by a 30m radius, to create the dimensions of an AIM plot, and the single most influential vegetation type was recorded.
 
-```{r buffer points from GE and AIM , echo = F}
+```{r buffer points from GE and AIM, eval = T}
 
 p <- file.path(here::here(), 'data/processed')
 
@@ -474,7 +478,7 @@ veg_pts <- bind_rows(veg_pts, random_pts, reg_pts) %>%
 rm(reg_pts, random_pts, plot_drawn, random_drawn, reg_drawn)
 ```
 
-```{r Import all Geographic Data and extract occurrences to points, eval = F}
+```{r Import all Geographic Data and extract occurrences to points}
 p <- '/media/sagesteppe/ExternalHD/plot_post_stratification'
 UFO_land <- st_read(
   paste0(p, '/data/processed/UFO_Allotments/', 'UFO_Allotments.shp'),
@@ -523,7 +527,7 @@ names(predictors) <- c('NAIP_red', 'NAIP_green', 'NAIP_blue', 'NAIP_IR', 'NDVI',
 rm(naip_NC, texture, DEM, slope, PhysioPath, UFO_land, files, naip_IR, NDVI, path)
 ```
 
-```{r set random forest model parameters proportion, echo  = F}
+```{r set random forest model parameters proportion, eval = T}
 train_prop <- 0.7
 mTry <- 4
 nTT <- 1000
@@ -531,13 +535,13 @@ sF <- 1.5
 I <- 0.01
 ```
 
-```{r Extract Predictor Variables to Points and create partitions, message = F, warning = 'hide', eval = F}
+```{r Extract Predictor Variables to Points and create partitions, message = F, warning = 'hide'}
 library(caret)
 library(parallel)
 library(doParallel)
 library(randomForest)
 
-veg_pts <- project(veg_pts, crs(predictors))
+veg_pts <- terra::project(veg_pts, terra::crs(predictors))
 VegClass <- extract(predictors, veg_pts, method = 'simple', touches = F, fun = mean)#,
                   #  weights = T) # note weights work on Lightscape, but not parkland. 
 VegClass <- cbind(as.data.frame(veg_pts), VegClass[,2:ncol(VegClass)])
@@ -584,7 +588,7 @@ rm(VegClass, split_obs, testOriginal, vp, mainDir, subDir, testOriginal, split_o
 ```
 
 
-```{r import and prepare values for partition descriptions}
+```{r import and prepare values for partition descriptions, eval = T}
 train <- read.csv(file.path('../data/processed/', 'rf_training_data.csv')) %>% 
   select(class)
 
@@ -598,7 +602,7 @@ test <- read.csv(file.path('../data/processed/', 'rf_testing_data.csv'))
 
 To develop a random forest model, the data set of `r toString(nrow(veg_pts))` classified points were partitioned using a split of `r toString(train_prop)`:`r toString(1-train_prop)` for the training and testing sets (n = `r toString(nrow(train))`, n = `r toString(nrow(test))`) using 'caret'. The data set was not balanced (number of plots per stratum:  `r toString(classes)`) due to the natural varying presence of these vegetation types in the study area.
 
-```{r Fit Random Forest Model, warning = F, message = F, eval = F}
+```{r Fit Random Forest Model}
 
 opt_mtry <- tuneRF(train, train$class, ntreeTry = nTT,
                stepFactor = sF, improve = I, trace = TRUE, plot = TRUE)
@@ -616,13 +620,13 @@ rm(cl, train, opt_mtry)
 
 The number of mtry in the random forest model were tuned using the function 'tuneRF' with the number of try's set to `r toString(nTT)`, a step factor of `r toString(sF)` and a relative minimum improvement in Out of Bag (OOB) error rate set at `r toString(I)`. The random forest model was then trained using `r toString(mTry)` mtry and `r toString(nTT)` trees, all using the RandomForest package. 
 
-```{r Random Forest Results, echo = F, warning = F, message = F, results = 'hide'}
+```{r Random Forest Results, results = 'hide', eval = T}
 
-prds <- '/media/sagesteppe/ExternalHD/plot_post_stratification/results/stats'
+prds <- '../results/stats'
 veg_rf_model <- readRDS(file = file.path(prds, 'RandomForest2022-10-31.rds'))
 test$class <- as.factor(test$class)
 
-data.frame(randomForest::importance(veg_rf_model, type = 2))# %>% # modifies in place!!! OOP :-)
+data.frame(randomForest::importance(veg_rf_model, type = 2))# %>% # modifies in place!!! OOP :-) BUT assigned to deal with markdown.
 #  rownames_to_column('Variable') %>% 
 #  arrange(-MeanDecreaseGini) %>% # these results are to in the weeds
 #  knitr::kable( col.names = c('Variable', 'Importance'),  align = "l", digits = 3,
@@ -634,10 +638,10 @@ data.frame(randomForest::importance(veg_rf_model, type = 2))# %>% # modifies in 
 test_prediction <- predict(veg_rf_model, test)
 cmRestrat <- caret::confusionMatrix(test_prediction, test$class)
 
-rm(test_prediction, train_prop, test, prds)
+rm(test_prediction, train_prop, test, prds, classes)
 ```
 
-```{r original GAP evaluation, echo = F, warning = F}
+```{r original GAP evaluation, eval = T}
 
 p <- '/media/sagesteppe/ExternalHD/UFO_AIM_Design_Stratification'
 pts2test <- st_read('../data/processed/StratTest/TestSetStratification.shp', quiet = T) %>% vect()
@@ -708,7 +712,7 @@ scatterplot3d::scatterplot3d(z = dg$Specificity, y = dg$Sensitivity, x = dg$Accu
               main="Relationships between diagnostic\nmetrics for vegetation types")
 
 
-rm(OrigDiagnostics, RestratDiagnostics, shapes, strata_pal2, dg)
+rm(OrigDiagnostics, RestratDiagnostics, shapes, strata_pal2, dg, train)
 ```
 
 
@@ -744,7 +748,7 @@ rm(veg_rf_model)
 
 # Comparison of Field Office Between Old and New Vegetation Models 
 
-```{r make waffle charts of changes in vegetation, echo = F,  fig.height = 7, fig.width = 3, fig.cap = "Changes in Predicted Land Cover", out.width= "50%", out.extra='style="float:left; padding:10px"'}
+```{r make waffle charts of changes in vegetation, eval = T,  echo = F,  fig.height = 7, fig.width = 3, fig.cap = "Changes in Predicted Land Cover", out.width= "50%", out.extra='style="float:left; padding:10px"'}
 
 library(waffle)
 library(tidyverse)
@@ -854,7 +858,7 @@ plot_grid(
   ncol = 1,
   rel_heights = c(0.05, 1) )
 
-rm(strata_pal2, strata_pal3, random_waffle, reclass_waffle, legend, plot_col)
+rm(strata_pal2, strata_pal3, random_waffle, reclass_waffle, legend, plot_col, strata_waffle, title)
 ```
 
 Both the total area of each vegetation type, stratum, and the number of plots per stratum influence the statistical conclusions which can be drawn in these areas. An increase in the surface area of a stratum, without an increase in the number of plots would decrease the statistical confidence associated with conclusions from it and *vice versa*. However, if the weights of point drops were equivalent in all study areas
@@ -904,12 +908,17 @@ rvals <- rvals %>%
   column_to_rownames('Original') %>% # for circle chart. 
   as.matrix()
 
-colnames(rvals) <- paste0('to', ltable$Stratum)
+colnames(rvals) <- paste0(' ', ltable$Stratum)
 rownames(rvals) <- reprocessedGAP %>% 
   arrange(RasterValue) %>% 
   pull(Code)
+
+colOrder <- c(" AS", " MMS"," PJ"," MC"," SD", " SS")
+rowOrder <- c('AS', 'MMS', 'GR', 'PJ', 'PP', 'RI', 'SS', 'MC', 'SD', 'OT')
+rvals <- rvals[ rowOrder, colOrder]
+
 sp2 <- strata_pal # create a palette to mark the colors in both ends
-names(sp2) <- paste0('to', names(strata_pal))
+names(sp2) <- paste0(' ', names(strata_pal))
 all_pals<- c(strata_pal, sp2)
 
 # let us consider removing the labels, and adding a legend for the colors instead. 
@@ -917,7 +926,9 @@ all_pals<- c(strata_pal, sp2)
 par(mar = c(1.5, 1.5, 4.1, 1.5))
 circos.par(start.degree = 0)
 chordDiagram(rvals, transparency = 0.5, directional = 1, 
-             grid.col = all_pals, diffHeight  = -0.04, big.gap = 10)
+             grid.col = all_pals, diffHeight  = -0.04, 
+             big.gap = 10,
+             annotationTrackHeight = c(0.10, 0.10))
 abline(h = 0, lty = 2, col = "#000000")
 title("Movement of Pixels from stratification\n(bottom) to post stratification (top)")
 circos.clear()
@@ -925,11 +936,6 @@ circos.clear()
 
 The initial AIM sample design was based upon a stratification which included `r` communities. This design was based on a manual reclassification of the GAP/LANDFIRE National Terrestrial Ecosystems 2011 data set. 
 
-# Citations
+# References
 
-```{r Citations, echo = F, comment = ""}
-c("terra", "glcm", "RStoolbox", "randomForest", "caret", "parallel", "doParallel") %>%
-  map(citation) %>%
-  print(style = "text")
-```
 
