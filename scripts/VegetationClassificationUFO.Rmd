@@ -1,5 +1,5 @@
 ---
-title: "Vegetation_Classification"
+title: "Vegetation Classification"
 author: NULL
 date: NULL
 output:
@@ -726,8 +726,6 @@ and can be thought of as the probability of the method giving a negative result 
 $$ Accuracy = \frac{\text{correct classifications}}{\text{all classifications }} $$
 and can be thought of as the probability of the method giving the correct result under all conditions. *Balanced accuracy* will account for different in the number of individuals in groups, if the number of individuals in groups differ widely, accuracy may gave a false indication of the models performance. 
 
-\newpage
-
 While the accuracy for the model was `r toString(round(cmRestrat[["overall"]][["Accuracy"]],3))` (range `r toString(round(cmRestrat[["overall"]][["AccuracyLower"]],2))` - `r toString(round(cmRestrat[["overall"]][["AccuracyUpper"]], 2))` 95 % confidence interval), due to an imbalance in the number of observations per group a more appropriate for evaluating the overall performance of the model, is the Kappa metric, `r toString(round(cmRestrat[["overall"]][["Kappa"]], 3))`.
 
 Notably, the model has high rates of Specificity (median = `r toString(round(median(cmRestrat[[4]][3:6, grep('Spec', colnames(cmRestrat[[4]]))]), 2))`, less Aspen and Mixed-Conifer), showing that when it predicts a vegetation type onto a pixel cell, the prediction is usually correct; less so for prediction of Pinyon-Juniper (`r toString(round(cmRestrat[[4]][grep('PJ', rownames(cmRestrat[['byClass']])) , grep('Spec', colnames(cmRestrat[[4]])) ], 3))`). However, the model suffers from low Sensitivity (median = `r toString(round(median(cmRestrat[[4]][3:6, grep('Sens', colnames(cmRestrat[[4]]))]), 2))`, less AS and MC), indicating that it is unable to detect all occurrences of a vegetation type. For example, the model is only able to appropriately classify half of the occurrences of Sage Steppe (`r toString(round(cmRestrat[[4]][grep('SS', rownames(cmRestrat[['byClass']])) , grep('Sens', colnames(cmRestrat[[4]])) ], 3))`
@@ -906,7 +904,7 @@ write.csv(area, file.path(p1, 'Count_OriginalStrat_raster_values.csv'), row.name
 rm(d, original_strat, reclassified)
 ```
 
-```{r reimport data for showing flow from veg classes, echo = F, fig.cap= "Depiction of how raster cells in the UFO are redistributed from the original sample design (lower half), to the the reclassified spatial product for the sample design (upper half)", fig.height = 6, fig.width = 6}
+```{r reimport data for showing flow from veg classes, echo = F, eval = T, fig.cap= "Depiction of how raster cells in the UFO are redistributed from the original sample design (lower half), to the the reclassified spatial product for the sample design (upper half)", fig.height = 6, fig.width = 6}
 
 shhh(library(circlize))
 
