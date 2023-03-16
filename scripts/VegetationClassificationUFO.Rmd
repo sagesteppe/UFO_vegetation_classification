@@ -6,6 +6,10 @@ output:
   pdf_document: default
   word_document: default
 always_allow_html: yes
+header-includes:
+- \usepackage[width=\textwidth]{caption}
+- \usepackage{enumitem}
+- \usepackage{wrapfig}
 csl: ../citations/citations/apa.csl
 bibliography: ../citations/citations/citations.bib
 link-citations: yes
@@ -13,11 +17,11 @@ link-citations: yes
 
 The initial AIM sample design for a field office utilized stratified random sampling within classified vegetation types which the plots could make inference to. The vegetation types were composed of alliances and communities from the GAP-Landfire National Terrestrial Ecosystems spatial data set (@us2016gap). Alliances and communities were aggregated, by an expert at each field office, to form broader vegetation groups in order for them to have more samples per unit area.
 
-However, the GAP data set erroneously classifies many vegetation types at a non-negligible rate. Accordingly, a number of areas stratified as one vegetation type through the project may not feature the intended target vegetation. Thus, several of the stratified zones are in error, and may sensibly have their plots and acreage reallocated to inform inference of conditions in the larger vegetation types. 
+However, the GAP data set erroneously classifies many vegetation types at a non-negligible rate. Accordingly, a number of areas stratified as one vegetation type through the project may not feature the intended target vegetation. Thus, several of the stratified zones are in error, and while we cannot change the area associated with each plot, which was baked in at the original sample design over five years ago, in certain instances the actual stratum which the plot was sampled in, and the actual cover of that stratum across the landscape will be considered as necessary.
 
-For example, of the nine vegetation types which the AIM project was stratified across, a couple were seldom seen, such as 'Mixed Conifer' vegetation. The study area does contain this vegetation type, however it represents a fraction of a percent in the Field Office, and the designated stratified area did not coincide with it's actual presence. As the stratified area did not correlate with the vegetation type, neither could the random plots drawn within it. Accordingly the acreage of these areas should be reclassified into their appropriate vegetation types, alongside the plot, in order that these data are interpreted in the correct context. 
+For example, of the nine vegetation types which our AIM project was stratified across, a couple were seldom seen, such as 'Mixed Conifer' vegetation. The study area does contain this vegetation type, however it represents a fraction of a percent in the Field Office, and the designated stratified area did not coincide with it's actual presence. As the stratified area did not correlate with the vegetation type, neither could the random plots drawn within it. Accordingly the acreage of these areas should, as required, be considered within their appropriate vegetation types in order that these data are interpreted in the correct context. 
 
-Additional problems were inherited with a vegetation types known as 'Other'. This is an aggregate developed from the *need* to classify the entirety of the field office. It functions as a catch-all designation for vegetation types which do not have adequate cover to form a broader classification. For example, a small patch of Blackbrush (*Coleogyne ramossisima*) on 90, gypsum terraces in the Paradox Valley, and escarpment vegetation with Stansbury's Cliffrose (*Purshia stansburyiana*) across the entire study area were placed into this designation. As 'Other' is not a group wherein the members have any inherit similarities to themselves, we argue they should align with other groups which they share, even if only weak, affinities. Affinities between the gysum terraces, to the salt desert, both soils which reduce the availability of free water for plant usage and result in barren to salt-tolerant vegetation are evident. Similarities between the escarpments of mesa's and the Pinyon-Juniper which occupies both the thin soil at the edges of the mesa, and the Pinyon-Juniper woodlands on the rocky soils at the toes of the escarpments, as well as are scattered throughout the Stansbury Cliffrose areas make this a tangible target for placement of these 'other' plots. 
+Additional problems were inherited with a vegetation types known as 'Other'. This is an aggregate developed from the *need* to classify the entirety of the field office. It functions as a catch-all designation for vegetation types which do not have adequate cover to form a broader classification. For example, a small patch of Blackbrush (*Coleogyne ramossisima*) on highway 90, gypsum terraces in the Paradox Valley, and escarpment vegetation with Stansbury's Cliffrose (*Purshia stansburyiana*) across the entire study area were placed into this designation. As 'Other' is not a group wherein the members have any inherit similarities to themselves, we argue they should align with other groups which they share, even if only weak, affinities. Affinities between the gypsum terraces, to the salt desert, both soils which reduce the availability of free water for plant usage and result in barren to salt-tolerant vegetation are evident. Similarities between the escarpments of mesa's and the Pinyon-Juniper which occupies both the thin soil at the edges of the mesa, and the Pinyon-Juniper woodlands on the rocky soils at the toes of the escarpments, as well as are scattered throughout the Stansbury Cliffrose areas make this a tangible target for placement of these 'other' plots. 
 
 A final problem is associated with the need to classify bodies of water. Our field office the 'Uncompahgre', is named after a word of Ute origin which has various translations, but a central element of them is a reference to 'Red Rocks' and 'flowing water'. Our design stratum had 4% of the survey area designated as riparian, in part to hold surface rivers. However, given the allowance to shift plots 50m in the cardinal directions, the tri-spoke design of aim plots requiring a 60m diameter, and the deployment of Lotic AIM during the sampling period, few to none plots remained in the riparian vegetation type. 
 
@@ -416,7 +420,8 @@ reg <- file.path('../data/processed/',
 
 twenty22 <- read.csv('../data/processed/UFO_2022_AIM_CLASSIFIED.csv')
 historicVeg <- read.csv('../data/processed/UFO_Veg_monitoring_CLASSIFIED.csv') %>% 
-  na_if("")
+  mutate(across(where(is.character), ~ na_if(., "")))
+
 plot_drawn <- (nrow(twenty22) + nrow(historicVeg))
 plot_class <- bind_rows(twenty22, historicVeg) %>% drop_na()
 
@@ -428,7 +433,7 @@ reg_pts <- reg_drawn %>%
 
 random_drawn <- do.call(rbind, lapply(random, function(x) 
   read.csv(x, stringsAsFactors = FALSE))) %>% 
-  na_if("") 
+  mutate(across(where(is.character), ~ na_if(., "")))
 random_pts <- random_drawn %>% drop_na() 
 
 rm(random, twenty22, historicVeg)
@@ -674,7 +679,7 @@ cmOrig <- caret::confusionMatrix(mdsOrig$True, mdsOrig$Original)
 rm(factor_lvls, a, mdsOrig, gap)
 ```
 
-```{r plot Results side by side, eval = T, fig.height = 4, fig.width = 4, fig.cap = "Three dimensional scatter-plot showing the relationship between three common metrics for evaluating the predictions of models. Circles represent the performance of the original stratification, and diamonds the new classification. Positions towards the upper right corner indicate more desirable qualities."}
+```{r plot Results side by side, eval = F}
 
 RestratDiagnostics <- data.frame(
   'Version' = rep('Original', length(rownames(cmRestrat[[4]]))),
@@ -705,13 +710,14 @@ strata_pal2 <- strata_pal2[1:nrow(dg)]
 shapes = c(18, 20)
 shapes <- shapes[as.numeric(dg$Version)]
 
+png('../results/figures/scatterplot.png')
 par(mar = c(1.1, 3.1, 2.1, 3.1))
 scatterplot3d::scatterplot3d(z = dg$Specificity, y = dg$Sensitivity, x = dg$Accuracy, type="h",
               pch = shapes, color = strata_pal2, cex.symbols = 2, box = F,las=1,
               zlab = 'Specificity', ylab = 'Sensitivity', xlab = 'Balanced Accuracy', 
               zlim  = c(0.5, 1), xlim  = c(0.5, 1), angle = 45, cex.axis = 0.6,
               main="Relationships between diagnostic\nmetrics for vegetation types")
-
+dev.off()
 
 rm(OrigDiagnostics, RestratDiagnostics, shapes, strata_pal2, dg, train)
 ```
@@ -728,12 +734,18 @@ and can be thought of as the probability of the method giving the correct result
 
 While the accuracy for the model was `r toString(round(cmRestrat[["overall"]][["Accuracy"]],3))` (range `r toString(round(cmRestrat[["overall"]][["AccuracyLower"]],2))` - `r toString(round(cmRestrat[["overall"]][["AccuracyUpper"]], 2))` 95 % confidence interval), due to an imbalance in the number of observations per group a more appropriate for evaluating the overall performance of the model, is the Kappa metric, `r toString(round(cmRestrat[["overall"]][["Kappa"]], 3))`.
 
+\begin{wrapfigure}{r}{0.45\textwidth}
+  \centering
+    \includegraphics[width=0.45\textwidth]{../results/figures/scatterplot.png}
+  \caption{Three dimensional scatter-plot showing the relationship between three common metrics for evaluating the predictions of models. Circles represent the performance of the original stratification, and diamonds the new classification. Positions towards the upper right corner indicate more desirable qualities.}
+\end{wrapfigure}
+
 Notably, the model has high rates of Specificity (median = `r toString(round(median(cmRestrat[[4]][3:6, grep('Spec', colnames(cmRestrat[[4]]))]), 2))`, less Aspen and Mixed-Conifer), showing that when it predicts a vegetation type onto a pixel cell, the prediction is usually correct; less so for prediction of Pinyon-Juniper (`r toString(round(cmRestrat[[4]][grep('PJ', rownames(cmRestrat[['byClass']])) , grep('Spec', colnames(cmRestrat[[4]])) ], 3))`). However, the model suffers from low Sensitivity (median = `r toString(round(median(cmRestrat[[4]][3:6, grep('Sens', colnames(cmRestrat[[4]]))]), 2))`, less AS and MC), indicating that it is unable to detect all occurrences of a vegetation type. For example, the model is only able to appropriately classify half of the occurrences of Sage Steppe (`r toString(round(cmRestrat[[4]][grep('SS', rownames(cmRestrat[['byClass']])) , grep('Sens', colnames(cmRestrat[[4]])) ], 3))`
 ) and Mixed Mountain Shrub (`r toString(round(cmRestrat[[4]][grep('MMS', rownames(cmRestrat[['byClass']]) ,'MMS') , grep('Sens', colnames(cmRestrat[[4]])) ], 3))`). Accordingly this model is susceptible to over-predicting the occurrence of Pinyon-Juniper, at the expense of Mixed Mountain Shrub and Sagebrush-steppe. This is to be expected given the sample imbalance, which contained many more plots PJ than other types. However numerous trials of reducing the number of Pinyon-Juniper plots did not significantly increase the quality of predictions. Further indicating, that the features used are not adequate for distinguishing between the transitional points enough Pinyon and Junipers are present where Sagebrush-steppe phases into Pinyon-Juniper, and where shrubs increase in Pinyon-Juniper and it phases into Mixed-Mountain Shrub. While we believe this may be readily accomplished, given the objectives and goals of this process, we believe these are out of the current scope. 
 
 In order to determine the relative performance of our model to the original GAP classification a confusion matrix was also generated. A similar number of test points, `r toString(nrow(pts2test))`, were used. These points were only selected from the computer generated points in order to be independent of the data product, which the AIM plots were derived from. Several metrics indicate the original model is less accurate than the second model. The accuracy of the model was `r toString(round(cmOrig[["overall"]][["Accuracy"]],3))` (range `r toString(round(cmOrig[["overall"]][["AccuracyLower"]],2))` - `r toString(round(cmOrig[["overall"]][["AccuracyUpper"]], 2))` 95 % confidence interval), a difference of roughly `r toString(round(cmRestrat[["overall"]][["Accuracy"]] - cmOrig[["overall"]][["Accuracy"]],2))`. This test data set was also unbalanced and it's kappa, `r toString(round(cmOrig[["overall"]][["Kappa"]], 3))`, serves as a better predictor or overall model performance in this case, a difference of roughly `r toString(round(cmRestrat[["overall"]][["Kappa"]] - cmOrig[["overall"]][["Kappa"]], 2))`. Considering only the four major vegetation classes also present in the re-stratified model the original has similar rates of specificity (median = `r toString(round(median(cmOrig[[4]][3:6, grep('Spec', colnames(cmOrig[[4]]))]), 2))`, less AS and MC), but similar to the re stratified model but has lower rates of sensitivity (median = `r toString(round(median(cmOrig[[4]][3:6, grep('Sens', colnames(cmOrig[[4]]))]), 2))`, less AS and MC). 
 
-On the whole the new model outperforms the older model in all comparisons except for that the sensitivity of the original PJ classification is higher than that of the secondary PJ classification (`r toString(round(cmOrig[[4]][grep('PJ', rownames(cmOrig[['byClass']])) , grep('Sens', colnames(cmOrig[[4]])) ], 3))` to `r toString(round(cmRestrat[[4]][grep('PJ', rownames(cmRestrat[['byClass']])) , grep('Sens', colnames(cmRestrat[[4]])) ], 3))`), SEE FIGURE X. In general their are multiple trade offs in the comparison of models, however the new model is both likely to correctly identify a the strata of a location, and to identify it correctly. 
+On the whole the new model outperforms the older model in all comparisons except for that the sensitivity of the original PJ classification is higher than that of the secondary PJ classification (`r toString(round(cmOrig[[4]][grep('PJ', rownames(cmOrig[['byClass']])) , grep('Sens', colnames(cmOrig[[4]])) ], 3))` to `r toString(round(cmRestrat[[4]][grep('PJ', rownames(cmRestrat[['byClass']])) , grep('Sens', colnames(cmRestrat[[4]])) ], 3))`). In general their are multiple trade offs in the comparison of models, however the new model is both likely to correctly identify a the strata of a location, and to identify it correctly. 
 
 ```{r remove writing parameters, echo = F, warning = F}
 rm(mTry, nTT, I, sF, pts2test)
@@ -756,9 +768,33 @@ predict_rf <- writeRaster(predict_rf_smooth, file.path(here(), '/data/processed/
 rm(veg_rf_model)
 ```
 
-# Comparison of Field Office Between Old and New Vegetation Models 
+# Comparison of Old and New Vegetation Models 
 
-```{r make waffle charts of changes in vegetation, eval = T,  echo = F,  fig.height = 7, fig.width = 3, fig.cap = "Changes in Predicted Land Cover", out.width= "50%"}
+\begin{wrapfigure}{r}{0.35\textwidth}
+  \centering
+    \includegraphics[width=0.35\textwidth]{../results/figures/Stratum_cover.png}
+  \caption{Changes in Predicted Land Cover}
+\end{wrapfigure}
+
+The initial sample design only classified around 41% of the field office as Pinyon-Juniper. Our field experiences indicate that this is a serious underestimate. Despite the need to incorporate several extra - or 'Other' vegetation types into Pinyon-Juniper to fit the four model vegetation classification, manual classification resulted in 60% of the 1600 points being categorized as Pinyon-Juniper. This result is much more in line with our observations, and expectations. That smaller amounts of land were categorized as Pinyon-Juniper by the initial strata actually has large affects on plot placements. Because these woodlands were intended to be sampled at a lower rate than other strata, this roughly 20% of area which is PJ, but missed in the original stratification was sampled more than desired. Thus resulting in lower amount of information on other vegetation types, such as sagebrush, as desired. Our model was slightly greedy with it's classification of Pinon-Juniper, raising it to 62% of the total area. An important caveat with our use of the models here is that, these areas include many late succession habitats, which have not had disturbances to maintain their phases in mixed grasslands. 
+
+Estimates of the amount of Sagebrush habitat differed widely between stratification efforts. In our experience many areas which were classified as Sagebrush in the original classification were actually Pinyon-Juniper, and the age of the PJ was great enough that this was unlikely to be a result of the different ages of aerial imagery. The original stratification had roughly 25% of the entire field office classified as Sagebrush, this value was too high. Our manual classification resulted in 12% of the field office being classified as Sagebrush, and our final classification from the model resulted in only 9% of land being classified as Sagebrush. We feel the true value is closer to 12% than the 9% predicted by the model. As mentioned, not as many plots were included in this strata as desired, due to the classification accuracy, rather many of the plots in this strata ended up being Pinyon-Juniper. Classifying sagebrush was difficult for us due to areas where it transitions into Mixed-Mountain Shrub and Pinyon-Juniper, i.e. what constitutes the transition point between these?
+
+The amount of Salt Desert is similar between all three methods, they agree the amount of salt desert in the field office is around 15% - 18%. In general, these predictions aligned well, and plots classified as salt-desert were. 
+
+A notable in-congruence is present with Mixed-Mountain Shrub between the systems. The original classification predicted very modest amounts of these stratum throughout the area, and predicted relatively high amounts of other forest types. Our manual classification, which retained Aspen and Mixed Conifer forest, detected nearly twice as much of this strata in the field office. The modelled cover was slightly less than this, and likely closer to a true value where 10% of the field office is Mixed-Mountain Shrub.
+
+\newpage
+
+\begin{wrapfigure}{r}{0.5\textwidth}
+  \centering
+    \includegraphics[width=0.5\textwidth]{../results/figures/circular_plot.png}
+  \caption{Depiction of how raster cells in the UFO are redistributed from the original sample design (lower half), to the the reclassified spatial product for the sample design (upper half)}
+\end{wrapfigure}
+
+The relationships for the six remaining minor components is more complex, as is illustrated in Figure 3. This figure tracks the movement of each individual raster cell from the old to the new classification. As previously mentioned, the accuracy of the old system cannot be officially compared, but only discussed. For example, the original classification (lower half of circle), was correct in it's identification of Pinyon-Juniper, however it was unable to detect all of it. Hence the green line tracking from the bottom to the top, contains nearly every single pixel, except for a few which we were able to identify as Mixed-Mountain Shrub. Nearly all 4% of the Riparian stratum can be accommodated in Pinyon Juniper or the Salt desert stratum. This is sensible as nearly all ephemeral rocky canyon bottoms support Pinyon Juniper vegetation, and as the streams flow through the lower elevation portions of the field office, the riparian band is only a meter or two wide, and hence what an AIM crew would sample is Salt Desert.  Most of the original Mixed Conifer was re-assigned as Mixed-Mountain Shrub, with only a portion remaining in this stratum. Similarly, it appears roughly half of the Ponderosa Pine was assigned to Pinyon-Juniper and the other to Mixed-Mountain Shrub. Roughly half of the area classified as Aspen was maintained, and the other half was also reclassified as Mixed-Mountain Shrub. Most of the grassland stratum was transferred to Salt Desert
+
+```{r prep graphics, echo = F, eval = T}
 
 library(waffle)
 library(tidyverse)
@@ -766,7 +802,7 @@ library(cowplot)
 
 # original land cover of sample design
 
-p <- '/media/sagesteppe/ExternalHD/UFO_AIM_Design_Stratification'
+p <- '../../UFO_AIM_Design_Stratification'
 initialGAP <- read.csv(file.path(p, 'raw', 'lookupTable.txt'))
 
 reprocessedGAP <- reprocessedGAP %>% 
@@ -820,7 +856,7 @@ random_waffle <- ggplot(veg_pts, aes(fill = VegClass, values = Percent)) +
 
 #  a waffle of what percent habitats exist in UFO based on reclassification
 
-reclassified <- rast('/media/sagesteppe/ExternalHD/plot_post_stratification/data/processed/PredictedVegClass.tif')
+reclassified <- rast('../../plot_post_stratification/data/processed/PredictedVegClass.tif')
 
 #plot(reclassified, col = c('#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00','#ffff33'))
 area <- values(reclassified)
@@ -831,6 +867,10 @@ ltable <- data.frame(
   num = c(1, 2, 3, 4, 5, 6), 
   Stratum = c('AS', 'MC', 'MMS', 'PJ', 'SD', 'SS')
 ) 
+
+```
+
+```{r create strata, eval = F}
 
 vegclass <- area %>% 
   inner_join(., ltable, 
@@ -860,18 +900,39 @@ plot_col <- plot_grid(strata_waffle, random_waffle,
 
 title <- ggdraw() + 
   draw_label("Percent Land Cover",
-    fontface = 'bold', x = 0,  hjust = 0 ) + 
-  theme(plot.margin = ggplot2::margin(unit(c(0.0,0.0,0.0,50), "lines")))
+    fontface = 'bold') 
 
-plot_grid(
+p <- plot_grid(
   title, plot_col,
   ncol = 1,
   rel_heights = c(0.05, 1) )
 
-rm(strata_pal2, strata_pal3, random_waffle, reclass_waffle, legend, plot_col, strata_waffle, title)
+png('../results/figures/Stratum_cover.png')
+p
+dev.off()
+
 ```
 
-Both the total area of each vegetation type, stratum, and the number of plots per stratum influence the statistical conclusions which can be drawn in these areas. An increase in the surface area of a stratum, without an increase in the number of plots would decrease the statistical confidence associated with conclusions from it and *vice versa*. However, if the weights of point drops were equivalent in all study areas
+```{r clean some variables}
+rm(strata_pal2, strata_pal3, random_waffle, reclass_waffle, legend, plot_col, strata_waffle, title, p)
+```
+
+```{r}
+reclassified <- rast('../data/processed/PredictedVegClass.tif')
+d <- cellSize(reclassified)
+
+area <- values(reclassified)
+area <- area[!is.na(area)] # 4 SS, # 3 SD, 2 PJ, 1 MMS
+area <- aggregate(area, list(num=area), length)
+
+sum(values(d), na.rm = T)
+sum(area$x) * 0.01989198
+plot(d)
+
+3922577634 * 0.0002471054
+
+(600000 + 600000 + 960000) / 1000000
+```
 
 ```{r compare values between rasters to create flow chart, eval = F}
 # first match the resolutions of these products, we will re sample the coarser original
@@ -904,11 +965,11 @@ write.csv(area, file.path(p1, 'Count_OriginalStrat_raster_values.csv'), row.name
 rm(d, original_strat, reclassified)
 ```
 
-```{r reimport data for showing flow from veg classes, echo = F, eval = T, fig.cap= "Depiction of how raster cells in the UFO are redistributed from the original sample design (lower half), to the the reclassified spatial product for the sample design (upper half)", fig.height = 6, fig.width = 6}
+```{r reimport data for showing flow from veg classes, echo = F, eval = F}
 
 shhh(library(circlize))
 
-p1 <- '/media/sagesteppe/ExternalHD/plot_post_stratification/data/processed'
+p1 <- '../../plot_post_stratification/data/processed'
 rvals <- read.csv(file.path(p1, 'Extracted_raster_values.csv'))
 area <- read.csv(file.path(p1, 'Count_OriginalStrat_raster_values.csv'))
 
@@ -933,6 +994,7 @@ all_pals<- c(strata_pal, sp2)
 
 # let us consider removing the labels, and adding a legend for the colors instead. 
 
+png('../results/figures/circular_plot.png')
 par(mar = c(1.5, 1.5, 4.1, 1.5))
 circos.par(start.degree = 0)
 chordDiagram(rvals, transparency = 0.5, directional = 1, 
@@ -942,12 +1004,9 @@ chordDiagram(rvals, transparency = 0.5, directional = 1,
 abline(h = 0, lty = 2, col = "#000000")
 title("Movement of Pixels from stratification\n(bottom) to post stratification (top)")
 circos.clear()
+dev.off()
+
 ```
-
-The initial AIM sample design was based upon a stratification which included communities. This design was based on a manual reclassification of the GAP/LANDFIRE National Terrestrial Ecosystems 2011 data set. 
-
-
-\newpage
 
 
 # References
