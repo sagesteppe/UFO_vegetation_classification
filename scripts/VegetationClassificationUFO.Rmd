@@ -116,7 +116,7 @@ done
 ```{r NAIP imagery processing}
 
 # the first step is to verify that we have all relevant NAIP datasets - i.e. 
-# those which intersect the land owernship of the office
+# those which intersect the land ownership of the office
 UFO_land <- st_read(
   paste0(here(), '/data/processed/UFO_Allotments/', 'UFO_Allotments.shp'),
   quiet = T) %>% 
@@ -195,7 +195,7 @@ rm(naip_imagery_collection_IR, naip_imagery_collection_NC, naip_imagery_IR, naip
 
 
 ```{r Import processed NAIP imagery and resample to other products}
-path <- '/media/sagesteppe/ExternalHD/NAIP/processed'
+path <- '../../NAIP/processed'
 files <- list.files(path)
 
 naip_IR <- files[grep('IR_naip.tif', files)]
@@ -488,9 +488,10 @@ rm(reg_pts, random_pts, plot_drawn, random_drawn, reg_drawn)
 ```
 
 ```{r Import all Geographic Data and extract occurrences to points}
-p <- '/media/sagesteppe/ExternalHD/plot_post_stratification'
+# p <- '/media/sagesteppe/ExternalHD/plot_post_stratification'
 UFO_land <- st_read(
-  paste0(p, '/data/processed/UFO_Allotments/', 'UFO_Allotments.shp'),
+  file.path('../../UFO_cartography',
+            'BLM_CO_Surface_Management', 'BLM_CO_Surface_Management_Agency.shp'),
   quiet = T) %>% 
   st_transform(4269) %>% 
   st_union() %>% 
@@ -500,7 +501,8 @@ UFO_land <- st_read(
   st_transform(26912) %>% 
   vect()
 
-path <- '/media/sagesteppe/ExternalHD/NAIP/processed'
+
+path <- '../../NAIP/processed'
 files <- list.files(path)
 files
 naip_NC <- rast(file.path(
@@ -514,7 +516,7 @@ texture <- rast(file.path(
   path, files[grep('Textures_pca.tif', files)]))
 texture <- resample(texture, naip_NC, method = 'cubicspline')
 
-PhysioPath <- '/media/sagesteppe/ExternalHD/AIM_Field_rasters'
+PhysioPath <- '../../AIM_Field_rasters'
 
 DEM <- rast(file.path(PhysioPath,
             list.files(PhysioPath,
@@ -532,6 +534,7 @@ slope <- resample(slope, naip_NC, method = 'cubicspline')
 predictors <- c(naip_NC, naip_IR, NDVI, texture, DEM, slope)
 names(predictors) <- c('NAIP_red', 'NAIP_green', 'NAIP_blue', 'NAIP_IR', 'NDVI', 
                        'GLCM_PC1', 'GLCM_PC2', 'DEM', 'Slope')
+plot(predictors)
 
 rm(naip_NC, texture, DEM, slope, PhysioPath, UFO_land, files, naip_IR, NDVI, path)
 ```
@@ -652,9 +655,9 @@ rm(test_prediction, train_prop, test, prds, classes)
 
 ```{r original GAP evaluation, eval = T}
 
-p <- '/media/sagesteppe/ExternalHD/UFO_AIM_Design_Stratification'
+p <- '../../UFO_AIM_Design_Stratification'
 pts2test <- st_read('../data/processed/StratTest/TestSetStratification.shp', quiet = T) %>% vect()
-gap <- rast('/media/sagesteppe/ExternalHD/UFO_AIM_Design_Stratification/processed/UFO_Strata.tif')
+gap <- rast('../../UFO_AIM_Design_Stratification/processed/UFO_Strata.tif')
 
 pts2test <- project(pts2test, crs(gap))
 reprocessedGAP <- read.csv(file.path(p, 'processed', 'UFO_strata_areas.csv')) %>% 
@@ -771,7 +774,8 @@ predict_rf <- terra::predict(object = predictors, model = veg_rf_model, cpkgs = 
 predict_rf_smooth <- focal(predict_rf, w = 5, fun = modal, na.policy= 'omit')
 plot(predict_rf_smooth, col = c('#e41a1c', '#377eb8', '#4daf4a', '#984ea3', '#ff7f00','#ffff33'))
 
-predict_rf <- writeRaster(predict_rf_smooth, file.path(here(), '/data/processed/PredictedVegClass-sm.tif'), overwrite = T)
+predict_rf <- writeRaster(predict_rf_smooth,
+                          file.path('../data/processed/PredictedVegClass-sm.tif'), overwrite = T)
 
 rm(veg_rf_model)
 ```
@@ -946,7 +950,7 @@ plot(d)
 ```{r compare values between rasters to create flow chart, eval = F}
 # first match the resolutions of these products, we will re sample the coarser original
 # to the finer remapped classification. 
-p <- '/media/sagesteppe/ExternalHD/UFO_AIM_Design_Stratification'
+p <- '../../UFO_AIM_Design_Stratification'
 original_strat <- rast(file.path(p, 'processed', 'UFO_Strata.tif'))
 rm(original_strat)
 
@@ -968,7 +972,7 @@ rvals <- data.frame(rvals) %>%
   rename(Reclassified = lyr1,
         Original= BPS_CODE)
 
-p1 <- '/media/sagesteppe/ExternalHD/plot_post_stratification/data/processed'
+p1 <- '../data/processed'
 write.csv(rvals, file.path(p1, 'Extracted_raster_values.csv'), row.names = F)
 write.csv(area, file.path(p1, 'Count_OriginalStrat_raster_values.csv'), row.names = F)
 rm(d, original_strat, reclassified)
